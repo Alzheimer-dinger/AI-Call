@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+websockets
+python-dotenv
+google-genai
+pinecone
+python-jose[cryptography]
+passlib[bcrypt]
+
+ffmpeg-python

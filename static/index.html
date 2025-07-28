@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Call Demo</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background-color: #f0f2f5; color: #1c1e21; }
+        h1 { color: #1877f2; }
+        #controls { display: flex; width: 90%; max-width: 800px; margin-top: 20px; align-items: center; justify-content: center; }
+        #recordButton { padding: 15px 30px; font-size: 18px; cursor: pointer; border: none; border-radius: 50px; background-color: #4CAF50; color: white; transition: background-color 0.3s, box-shadow 0.3s; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        #recordButton.recording { background-color: #f44336; }
+        #recordButton:hover { box-shadow: 0 6px 16px rgba(0,0,0,0.2); }
+        #status { margin-top: 20px; font-size: 16px; color: #606770; }
+    </style>
+</head>
+<body>
+    <h1>Call Demo</h1>
+    <div id="controls">
+        <button id="recordButton">Start Call</button>
+    </div>
+    <p id="status">Initializing...</p>
+
+    <script>
+        const recordButton = document.getElementById('recordButton');
+        const status = document.getElementById('status');
+        
+        let ws;
+        let audioContext;
+        let sourceNode;
+        let processorNode;
+        let audioQueue = [];
+        let nextStartTime = 0;
+        let isPlaying = false;
+        let isRecording = false;
+        let accessToken = null;
+
+        // Gemini Live 요구사항에 맞는 오디오 설정
+        const INPUT_SAMPLE_RATE = 16000;  // Gemini 입력 요구사항
+        const OUTPUT_SAMPLE_RATE = 24000; // Gemini 출력 샘플 레이트
+
+        // --- PCM 오디오 처리 로직 ---
+        function initializeAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log(`AudioContext initialized with sample rate ${audioContext.sampleRate}`);
+            }
+        }
+
+        // Float32Array를 16-bit PCM으로 변환
+        function float32ToPCM16(float32Array, targetSampleRate) {
+            const sourceSampleRate = audioContext.sampleRate;
+            let resampledData = float32Array;
+
+            // 리샘플링이 필요한 경우
+            if (sourceSampleRate !== targetSampleRate) {
+                const ratio = sourceSampleRate / targetSampleRate;
+                const newLength = Math.round(float32Array.length / ratio);
+                resampledData = new Float32Array(newLength);
+
+                for (let i = 0; i < newLength; i++) {
+                    const sourceIndex = Math.round(i * ratio);
+                    resampledData[i] = float32Array[Math.min(sourceIndex, float32Array.length - 1)];
+                }
+            }
+
+            // Float32를 16-bit PCM으로 변환
+            const pcm16 = new Int16Array(resampledData.length);
+            for (let i = 0; i < resampledData.length; i++) {
+                const sample = Math.max(-1, Math.min(1, resampledData[i]));
+                pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            }
+
+            return pcm16.buffer;
+        }
+
+        async function schedulePlayback() {
+            if (isPlaying || audioQueue.length === 0) {
+                return;
+            }
+            isPlaying = true;
+
+            const audioData = audioQueue.shift(); // 큐에서 첫 번째 청크 가져오기
+
+            // Gemini Live는 24kHz 16-bit PCM으로 응답을 보냄
+            const pcm16Data = new Int16Array(audioData);
+            const float32Data = new Float32Array(pcm16Data.length);
+
+            // 16-bit PCM을 Float32로 변환 (정규화)
+            for (let i = 0; i < pcm16Data.length; i++) {
+                float32Data[i] = pcm16Data[i] / 32767.0;
+            }
+
+            // AudioBuffer 생성 (Gemini 출력 샘플 레이트 사용)
+            const audioBuffer = audioContext.createBuffer(1, float32Data.length, OUTPUT_SAMPLE_RATE);
+            audioBuffer.getChannelData(0).set(float32Data);
+
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+
+            const currentTime = audioContext.currentTime;
+            const startTime = Math.max(currentTime, nextStartTime);
+            
+            source.start(startTime);
+            
+            // 다음 청크의 시작 시간을 현재 청크의 길이만큼 뒤로 설정
+            nextStartTime = startTime + audioBuffer.duration;
+            
+            source.onended = () => {
+                isPlaying = false;
+                schedulePlayback(); // 재귀적으로 다음 청크 재생 스케줄링
+            };
+        }
+
+        // --- WebSocket 및 녹음 로직 ---
+        async function getAccessToken() {
+            try {
+                const response = await fetch("/api/auth/token", { method: "POST" });
+                if (!response.ok) throw new Error(`Token fetch failed: ${response.statusText}`);
+                const data = await response.json();
+                accessToken = data.access_token;
+                status.textContent = "Ready. Press 'Start Call'.";
+                recordButton.disabled = false;
+            } catch (error) {
+                console.error("Authentication error:", error);
+                status.textContent = "Authentication failed. Please refresh.";
+            }
+        }
+
+        function setupWebSocket() {
+            if (!accessToken) return;
+            const wsUrl = `ws://localhost:8000/api/ws/live?token=${accessToken}`;
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => startRecordingStream();
+            ws.onmessage = (event) => {
+                if (event.data instanceof ArrayBuffer) {
+                    console.log(`Received ${event.data.byteLength} audio bytes from backend.`);
+                    audioQueue.push(event.data);
+                    schedulePlayback();
+                }
+            };
+            ws.onclose = () => stopRecordingStream(false);
+            ws.onerror = (error) => console.error("WebSocket error:", error);
+        }
+
+        async function startRecordingStream() {
+            if (!navigator.mediaDevices?.getUserMedia) return alert('Audio recording not supported.');
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: INPUT_SAMPLE_RATE,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                sourceNode = audioContext.createMediaStreamSource(stream);
+
+                // ScriptProcessorNode 사용 (구형이지만 더 안정적)
+                const bufferSize = 4096;
+                processorNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+                processorNode.onaudioprocess = (event) => {
+                    if (ws?.readyState === WebSocket.OPEN) {
+                        const inputBuffer = event.inputBuffer.getChannelData(0);
+                        const pcmData = float32ToPCM16(inputBuffer, INPUT_SAMPLE_RATE);
+                        ws.send(pcmData);
+                    }
+                };
+
+                sourceNode.connect(processorNode);
+                processorNode.connect(audioContext.destination);
+
+                isRecording = true;
+                recordButton.textContent = "Stop Call";
+                recordButton.classList.add('recording');
+                status.textContent = "I'm listening...";
+
+            } catch (err) {
+                console.error("Microphone error:", err);
+                status.textContent = "Microphone access failed.";
+            }
+        }
+
+        function stopRecordingStream(closeWebSocket = true) {
+            if (processorNode) {
+                processorNode.disconnect();
+                processorNode = null;
+            }
+            if (sourceNode) {
+                sourceNode.disconnect();
+                sourceNode = null;
+            }
+
+            isRecording = false;
+            recordButton.textContent = "Start Call";
+            recordButton.classList.remove('recording');
+            status.textContent = "Call ended.";
+
+            if (closeWebSocket && ws?.readyState === WebSocket.OPEN) ws.close();
+        }
+
+        recordButton.addEventListener('click', () => {
+            // 사용자의 첫 상호작용 시 AudioContext를 초기화 (브라우저 자동재생 정책)
+            initializeAudioContext();
+            if (isRecording) {
+                stopRecordingStream();
+            } else {
+                setupWebSocket();
+            }
+        });
+
+        // Initial setup
+        recordButton.disabled = true;
+        getAccessToken();
+
+    </script>
+</body>
+</html>

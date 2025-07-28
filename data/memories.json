@@ -1,0 +1,39 @@
+
+[
+  {
+    "id": "memory-1",
+    "content": "손녀딸이 작년 학예회에서 춤을 정말 잘 췄다. 분홍색 드레스를 입고 있었는데, 무대에서 가장 빛났다.",
+    "metadata": {
+      "type": "memory",
+      "person": "손녀딸",
+      "event": "학예회",
+      "time": "2023년"
+    }
+  },
+  {
+    "id": "memory-2",
+    "content": "아들과 함께 제주도 여행을 갔을 때, 성산일출봉에 올라가서 본 일출이 정말 아름다웠다. 평생 잊지 못할 경험이었다.",
+    "metadata": {
+      "type": "memory",
+      "person": "아들",
+      "place": "제주도 성산일출봉",
+      "event": "여행"
+    }
+  },
+  {
+    "id": "place-1",
+    "content": "우리 집은 서울시 강남구에 위치해 있으며, 주변에 공원이 있어서 산책하기 좋다.",
+    "metadata": {
+      "type": "place",
+      "name": "집"
+    }
+  },
+  {
+    "id": "person-1",
+    "content": "내 친구 영희는 그림을 그리는 것을 좋아하고, 특히 수채화를 잘 그린다.",
+    "metadata": {
+      "type": "person",
+      "name": "영희"
+    }
+  }
+]
