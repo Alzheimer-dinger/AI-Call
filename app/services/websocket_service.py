@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect
 from google import genai
@@ -72,7 +73,9 @@ class WebSocketService:
             config = {
                 "response_modalities": ["AUDIO"],
                 "system_instruction": enhanced_instruction,
-                "tools": [{"function_declarations": self._get_function_declarations()}]
+                "tools": [{"function_declarations": self._get_function_declarations()}],
+                "output_audio_transcription": {},
+                "input_audio_transcription": {}
             }
 
             async with self.client.aio.live.connect(model=self.model, config=config) as session:
@@ -102,7 +105,7 @@ class WebSocketService:
         try:
             while True:
                 pcm_data = await websocket.receive_bytes()
-                print(f"Received {len(pcm_data)} bytes from client")
+                print(f"[INPUT] Received {len(pcm_data)} bytes from client")
 
                 blob = types.Blob(
                     data=pcm_data,
@@ -123,7 +126,13 @@ class WebSocketService:
             while True:
                 try:
                     async for response in session.receive():
-                        print(f"Received response type: {type(response)}")
+                        print(f"Response type: {type(response).__name__}")
+
+                        # 디버깅을 위한 응답 구조 출력
+                        try:
+                            print(f"Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+                        except:
+                            pass
 
                         # Function call 처리
                         if hasattr(response, 'function_calls') and response.function_calls:
@@ -137,22 +146,81 @@ class WebSocketService:
 
                         # 오디오 응답 처리
                         elif hasattr(response, 'data') and response.data:
-                            print(f"Sending {len(response.data)} bytes to client")
+                            print(f"Sending {len(response.data)} bytes audio to client")
                             await websocket.send_bytes(response.data)
 
-                            # 응답을 대화 기록으로 저장
-                            await rag_service.save_conversation_turn(
-                                user['username'],
-                                "assistant",
-                                "audio_response"  # 실제로는 텍스트 변환이 필요
-                            )
-
-                        # 텍스트 응답 처리 (디버깅용)
+                        # 텍스트 응답 처리 (전사 기능)
                         elif hasattr(response, 'text') and response.text:
-                            print(f"Text response: {response.text}")
+                            print(f"[AI]: {response.text}")
+                            await rag_service.save_conversation_turn(
+                                user['username'], "assistant", response.text
+                            )
+                        
+                        # server_content가 있는 응답 처리 (전사 기능)
+                        elif hasattr(response, 'server_content') and response.server_content:
+                            server_content = response.server_content
+                            
+                            # 사용자 입력 전사 처리
+                            if hasattr(server_content, 'input_transcription') and server_content.input_transcription:
+                                transcription = server_content.input_transcription
+                                if hasattr(transcription, 'text') and transcription.text:
+                                    print(f"[사용자]: {transcription.text}")
+                                    await rag_service.save_conversation_turn(
+                                        user['username'], "user", transcription.text
+                                    )
+                                    
+                                    # 클라이언트에 전사 데이터 전송
+                                    transcription_message = {
+                                        "type": "transcription",
+                                        "speaker": "user",
+                                        "text": transcription.text
+                                    }
+                                    await websocket.send_text(json.dumps(transcription_message))
+                            
+                            # AI 응답 전사 처리
+                            if hasattr(server_content, 'output_transcription') and server_content.output_transcription:
+                                transcription = server_content.output_transcription
+                                if hasattr(transcription, 'text') and transcription.text:
+                                    print(f"[AI]: {transcription.text}")
+                                    await rag_service.save_conversation_turn(
+                                        user['username'], "assistant", transcription.text
+                                    )
+                                    
+                                    # 클라이언트에 전사 데이터 전송
+                                    transcription_message = {
+                                        "type": "transcription",
+                                        "speaker": "ai",
+                                        "text": transcription.text
+                                    }
+                                    await websocket.send_text(json.dumps(transcription_message))
+                            
+                            # 텍스트 응답 처리 (model_turn에서 텍스트 부분)
+                            if hasattr(server_content, 'model_turn') and server_content.model_turn:
+                                model_turn = server_content.model_turn
+                                if hasattr(model_turn, 'parts'):
+                                    for part in model_turn.parts:
+                                        if hasattr(part, 'text') and part.text:
+                                            print(f"[AI 텍스트]: {part.text}")
+                                            await rag_service.save_conversation_turn(
+                                                user['username'], "assistant", part.text
+                                            )
+                                            
+                                            # 클라이언트에 텍스트 응답 전송
+                                            transcription_message = {
+                                                "type": "transcription",
+                                                "speaker": "ai",
+                                                "text": part.text
+                                            }
+                                            await websocket.send_text(json.dumps(transcription_message))
+
+                        # 기타 응답 유형 로깅
+                        else:
+                            print(f"Unknown response type, skipping...")
 
                 except Exception as e:
                     print(f"Error in response iteration: {e}")
+                    import traceback
+                    traceback.print_exc()
                     await asyncio.sleep(0.1)
                     continue
 

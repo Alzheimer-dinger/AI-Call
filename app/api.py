@@ -67,10 +67,15 @@ async def search_memories(
                     "date": memory.metadata.get('date', ''),
                     "importance": memory.metadata.get('importance', 'medium')
                 })
-        
+                    "importance": memory.metadata.get('importance', 'medium')
         # 스코어 순으로 정렬 (높은 것부터)
         serializable_memories.sort(key=lambda x: x['score'], reverse=True)
 
+                })
+        
+        # 스코어 순으로 정렬 (높은 것부터)
+        serializable_memories.sort(key=lambda x: x['score'], reverse=True)
+@router.post("/memory/samples")
         return {"memories": serializable_memories}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to search memories: {str(e)}")

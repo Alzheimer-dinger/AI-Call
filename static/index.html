@@ -10,6 +10,14 @@
         #recordButton.recording { background-color: #f44336; }
         #recordButton:hover { box-shadow: 0 6px 16px rgba(0,0,0,0.2); }
         #status { margin-top: 20px; font-size: 16px; color: #606770; }
+        #transcriptionContainer { width: 90%; max-width: 800px; margin-top: 30px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 20px; }
+        #transcriptionContainer h2 { margin-top: 0; color: #1877f2; font-size: 20px; }
+        #transcriptionHistory { max-height: 300px; overflow-y: auto; border: 1px solid #e4e6ea; border-radius: 8px; padding: 15px; background-color: #f8f9fa; }
+        .transcript-entry { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; }
+        .transcript-user { background-color: #e3f2fd; border-left: 4px solid #2196f3; }
+        .transcript-ai { background-color: #f3e5f5; border-left: 4px solid #9c27b0; }
+        .transcript-speaker { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+        .transcript-text { font-size: 15px; line-height: 1.4; }
     </style>
 </head>
 <body>
@@ -18,10 +26,16 @@
         <button id="recordButton">Start Call</button>
     </div>
     <p id="status">Initializing...</p>
+    
+    <div id="transcriptionContainer">
+        <h2>📝 실시간 전사</h2>
+        <div id="transcriptionHistory"></div>
+    </div>
 
     <script>
         const recordButton = document.getElementById('recordButton');
         const status = document.getElementById('status');
+        const transcriptionHistory = document.getElementById('transcriptionHistory');
         
         let ws;
         let audioContext;
@@ -32,10 +46,87 @@
         let isPlaying = false;
         let isRecording = false;
         let accessToken = null;
+        
+        // 전사 버퍼링을 위한 변수들
+        let lastTranscriptionSpeaker = null;
+        let lastTranscriptionEntry = null;
+        let transcriptionBuffer = '';
+        let transcriptionTimeout = null;
 
         // Gemini Live 요구사항에 맞는 오디오 설정
         const INPUT_SAMPLE_RATE = 16000;  // Gemini 입력 요구사항
         const OUTPUT_SAMPLE_RATE = 24000; // Gemini 출력 샘플 레이트
+
+        // --- 전사 표시 로직 ---
+        function addTranscriptionEntry(speaker, text) {
+            // 타임아웃 클리어
+            if (transcriptionTimeout) {
+                clearTimeout(transcriptionTimeout);
+                transcriptionTimeout = null;
+            }
+            
+            // 같은 화자의 연속 메시지인지 확인
+            if (lastTranscriptionSpeaker === speaker && lastTranscriptionEntry) {
+                // 기존 텍스트에 추가
+                transcriptionBuffer += text;
+                
+                // 기존 엔트리의 텍스트 업데이트
+                const textContent = lastTranscriptionEntry.querySelector('.transcript-text');
+                textContent.textContent = transcriptionBuffer;
+                
+                // 자동 스크롤
+                transcriptionHistory.scrollTop = transcriptionHistory.scrollHeight;
+                
+                // 1초 후에 버퍼 완료 처리
+                transcriptionTimeout = setTimeout(() => {
+                    finishTranscriptionBuffer();
+                }, 1000);
+                
+            } else {
+                // 이전 버퍼 완료
+                finishTranscriptionBuffer();
+                
+                // 새로운 엔트리 생성
+                const entry = document.createElement('div');
+                entry.className = `transcript-entry transcript-${speaker}`;
+                
+                const speakerLabel = document.createElement('div');
+                speakerLabel.className = 'transcript-speaker';
+                speakerLabel.textContent = speaker === 'user' ? '👤 사용자' : '🤖 AI';
+                
+                const textContent = document.createElement('div');
+                textContent.className = 'transcript-text';
+                textContent.textContent = text;
+                
+                entry.appendChild(speakerLabel);
+                entry.appendChild(textContent);
+                
+                transcriptionHistory.appendChild(entry);
+                
+                // 새로운 버퍼 시작
+                lastTranscriptionSpeaker = speaker;
+                lastTranscriptionEntry = entry;
+                transcriptionBuffer = text;
+                
+                // 자동 스크롤
+                transcriptionHistory.scrollTop = transcriptionHistory.scrollHeight;
+                
+                // 1초 후에 버퍼 완료 처리
+                transcriptionTimeout = setTimeout(() => {
+                    finishTranscriptionBuffer();
+                }, 1000);
+            }
+        }
+        
+        function finishTranscriptionBuffer() {
+            if (transcriptionTimeout) {
+                clearTimeout(transcriptionTimeout);
+                transcriptionTimeout = null;
+            }
+            lastTranscriptionSpeaker = null;
+            lastTranscriptionEntry = null;
+            transcriptionBuffer = '';
+        }
 
         // --- PCM 오디오 처리 로직 ---
         function initializeAudioContext() {
@@ -138,6 +229,16 @@
                     console.log(`Received ${event.data.byteLength} audio bytes from backend.`);
                     audioQueue.push(event.data);
                     schedulePlayback();
+                } else {
+                    // 텍스트 메시지 (전사 데이터) 처리
+                    try {
+                        const transcriptionData = JSON.parse(event.data);
+                        if (transcriptionData.type === 'transcription') {
+                            addTranscriptionEntry(transcriptionData.speaker, transcriptionData.text);
+                        }
+                    } catch (error) {
+                        console.error('Error parsing transcription data:', error);
+                    }
                 }
             };
             ws.onclose = () => stopRecordingStream(false);
@@ -193,6 +294,9 @@
                 sourceNode.disconnect();
                 sourceNode = null;
             }
+
+            // 전사 버퍼 정리
+            finishTranscriptionBuffer();
 
             isRecording = false;
             recordButton.textContent = "Start Call";
