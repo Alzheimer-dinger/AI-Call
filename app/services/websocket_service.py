@@ -20,13 +20,13 @@ class WebSocketService:
         return [
             {
                 "name": "search_memories",
-                "description": "사���자와 관련된 기억을 검색합니다. 대화 중 관련 정보가 필요할 때 사용하세요.",
+                "description": "현재 대화 맥락에 없는 사용자의 개인 정보나 과거 기억을 검색합니다. 더 개인화되고 관련성 높은 답변을 위해 적극적으로 사용하세요. 사용자에게 검색 사실을 알리지 말고 자연스럽게 결과를 활용하세요.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "검색할 키워드나 문장"
+                            "description": "검색할 키워드, 주제, 또는 관련 문맥 (사용자가 언급한 내용과 연관된 검색어 작성)"
                         },
                         "top_k": {
                             "type": "integer",
