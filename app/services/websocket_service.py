@@ -134,13 +134,9 @@ class WebSocketService:
             while True:
                 try:
                     async for response in session.receive():
-                        # Function call 처리
-                        if hasattr(response, 'function_calls') and response.function_calls:
-                            for function_call in response.function_calls:
-                                await self._handle_function_call(session, function_call, user)
-
-                        elif hasattr(response, 'function_call') and response.function_call:
-                            await self._handle_function_call(session, response.function_call, user)
+                        # Tool call 처리 (Live API 방식)
+                        if hasattr(response, 'tool_call') and response.tool_call:
+                            await self._handle_tool_call(session, response.tool_call, user)
 
                         # 오디오 응답 처리
                         elif hasattr(response, 'data') and response.data:
@@ -206,10 +202,10 @@ class WebSocketService:
                                             }
                                             await websocket.send_text(json.dumps(transcription_message))
                                         
-                                        # executable_code 처리 - 이를 무시하고 계속 진행
+                                        # executable_code 처리 - 완전히 무시
                                         elif hasattr(part, 'executable_code') and part.executable_code:
-                                            print(f"[EXECUTABLE CODE] Ignoring code execution: {part.executable_code.code[:100]}...")
-                                            # 코드 실행은 하지 않고 무시
+                                            # 로그도 남기지 않고 완전히 무시
+                                            pass
 
                 except Exception as e:
                     print(f"[ERROR] Response processing failed: {e}")
@@ -224,84 +220,85 @@ class WebSocketService:
             print(f"[ERROR] Response forwarding failed: {e}")
             raise
 
-    async def _handle_function_call(self, session, function_call, user: dict):
-        """Function call을 처리하고 결과를 Gemini에 반환합니다."""
-        function_name = function_call.name
-        function_args = function_call.args if hasattr(function_call, 'args') else {}
-
-        print(f"[FUNCTION CALL] {function_name}({function_args})")
-
-        try:
-            if function_name == "search_memories":
-                # 기억 검색 (사용자별 필터링 적용)
-                query = function_args.get("query", "")
-                top_k = function_args.get("top_k", 3)
-
-                memories = memory_service.retrieve_memories(query, top_k, user['username'])
-
-                # 검색 결과를 텍스트로 포맷팅
-                if memories:
-                    memory_text = []
-                    for memory in memories:
-                        content = memory.metadata.get('content', '')
-                        score = memory.score
-
-                        if score > 0.5:  # 관련성 임계값을 낮춤
-                            category = memory.metadata.get('category', '')
-                            date = memory.metadata.get('date', '')
-                            memory_info = f"- {content}"
-                            if category:
-                                memory_info += f" (분류: {category})"
-                            if date:
-                                memory_info += f" (날짜: {date})"
-                            memory_text.append(memory_info)
-
-                    result = "\n".join(memory_text) if memory_text else "관련된 기억을 찾을 수 없습니다."
-                else:
-                    result = "관련된 기억을 찾을 수 없습니다."
-
-            elif function_name == "save_new_memory":
-                # 새로운 기억 저장
-                content = function_args.get("content", "")
-                category = function_args.get("category", "일반")
-                importance = function_args.get("importance", "medium")
-
-                metadata = {
-                    "category": category,
-                    "importance": importance,
-                    "date": datetime.now().strftime("%Y-%m-%d")
-                }
-
-                memory_id = memory_service.add_memory(user['username'], content, metadata)
-                result = f"기억이 저장되었습니다: {content}"
-
-            else:
-                result = f"알 수 없는 함수: {function_name}"
-
-            print(f"[FUNCTION RESULT] {result}")
-
-            # Function call 결과를 Gemini에 반환
-            function_response = types.FunctionResponse(
-                name=function_name,
-                id=getattr(function_call, 'id', None),
-                response={"result": result}
-            )
-
-            await session.send(function_response)
-
-        except Exception as e:
-            print(f"[FUNCTION ERROR] {function_name}: {e}")
-
+    async def _handle_tool_call(self, session, tool_call, user: dict):
+        """Live API tool call 처리"""
+        print(f"[TOOL CALL] Processing {len(tool_call.function_calls)} function calls")
+        
+        function_responses = []
+        for fc in tool_call.function_calls:
+            function_name = fc.name
+            function_args = fc.args if hasattr(fc, 'args') else {}
+            
+            print(f"[FUNCTION CALL] {function_name}({function_args})")
+            
             try:
-                # 오류 응답 전송
+                if function_name == "search_memories":
+                    query = function_args.get("query", "")
+                    top_k = function_args.get("top_k", 3)
+                    
+                    memories = memory_service.retrieve_memories(query, top_k, user['username'])
+                    
+                    if memories:
+                        memory_text = []
+                        for memory in memories:
+                            content = memory.metadata.get('content', '')
+                            score = memory.score
+                            
+                            if score > 0.5:
+                                category = memory.metadata.get('category', '')
+                                date = memory.metadata.get('date', '')
+                                memory_info = f"- {content}"
+                                if category:
+                                    memory_info += f" (분류: {category})"
+                                if date:
+                                    memory_info += f" (날짜: {date})"
+                                memory_text.append(memory_info)
+                        
+                        if memory_text:
+                            result = "검색된 기억:\n" + "\n".join(memory_text)
+                        else:
+                            result = "관련된 기억을 찾을 수 없습니다."
+                    else:
+                        result = "관련된 기억을 찾을 수 없습니다."
+                
+                elif function_name == "save_new_memory":
+                    content = function_args.get("content", "")
+                    category = function_args.get("category", "일반")
+                    importance = function_args.get("importance", "medium")
+                    
+                    metadata = {
+                        "category": category,
+                        "importance": importance,
+                        "date": datetime.now().strftime("%Y-%m-%d")
+                    }
+                    
+                    memory_id = memory_service.add_memory(user['username'], content, metadata)
+                    result = f"기억이 저장되었습니다: {content}"
+                
+                else:
+                    result = f"알 수 없는 함수: {function_name}"
+                
+                print(f"[FUNCTION RESULT] {result}")
+                
+                # FunctionResponse 생성 (올바른 딕셔너리 형식)
+                function_response = types.FunctionResponse(
+                    id=fc.id,
+                    name=fc.name,
+                    response={"result": result}
+                )
+                function_responses.append(function_response)
+                
+            except Exception as e:
+                print(f"[FUNCTION ERROR] {function_name}: {e}")
                 error_response = types.FunctionResponse(
-                    name=function_name,
-                    id=getattr(function_call, 'id', None),
+                    id=fc.id,
+                    name=fc.name,
                     response={"error": str(e)}
                 )
-                await session.send(error_response)
-            except Exception as send_error:
-                print(f"[ERROR] Failed to send function error response: {send_error}")
+                function_responses.append(error_response)
+        
+        await session.send_tool_response(function_responses=function_responses)
+
 
 # 전역 인스턴스 생성
 websocket_service = WebSocketService()
