@@ -70,16 +70,26 @@ class WebSocketService:
                 user['username']
             )
 
+            print(f"[SESSION START] Live session starting for {user['username']}")
+            print(f"[SYSTEM PROMPT] {enhanced_instruction}")
+
             config = {
                 "response_modalities": ["AUDIO"],
                 "system_instruction": enhanced_instruction,
                 "tools": [{"function_declarations": self._get_function_declarations()}],
                 "output_audio_transcription": {},
-                "input_audio_transcription": {}
+                "input_audio_transcription": {},
+                "generation_config": {
+                    "candidate_count": 1,
+                    "max_output_tokens": 8192,
+                    "temperature": 0.7,
+                    "top_p": 0.95,
+                    "top_k": 40
+                }
             }
 
             async with self.client.aio.live.connect(model=self.model, config=config) as session:
-                print(f"Persistent Gemini Live session established for {user['username']}")
+                print(f"[SESSION OPEN] Live session established for {user['username']}")
 
                 tasks = [
                     asyncio.create_task(self._forward_to_gemini(websocket, session, user)),
@@ -89,15 +99,16 @@ class WebSocketService:
                 try:
                     await asyncio.gather(*tasks)
                 except (WebSocketDisconnect, Exception) as e:
-                    print(f"Task interrupted: {e}")
+                    print(f"[SESSION INTERRUPTED] {e}")
                 finally:
                     for task in tasks:
                         if not task.done():
                             task.cancel()
                     await asyncio.gather(*tasks, return_exceptions=True)
+                    print(f"[SESSION CLOSE] Live session ended for {user['username']}")
 
         except Exception as e:
-            print(f"An unexpected error occurred in live session: {e}")
+            print(f"[SESSION ERROR] {e}")
             raise
 
     async def _forward_to_gemini(self, websocket: WebSocket, session, user: dict):
@@ -105,8 +116,6 @@ class WebSocketService:
         try:
             while True:
                 pcm_data = await websocket.receive_bytes()
-                print(f"[INPUT] Received {len(pcm_data)} bytes from client")
-
                 blob = types.Blob(
                     data=pcm_data,
                     mime_type=f"audio/pcm;rate={self.target_sample_rate}"
@@ -114,10 +123,9 @@ class WebSocketService:
                 await session.send_realtime_input(audio=blob)
 
         except WebSocketDisconnect:
-            print("Client disconnected during audio forwarding.")
             raise
         except Exception as e:
-            print(f"Error forwarding to Gemini: {e}")
+            print(f"[ERROR] Audio forwarding failed: {e}")
             raise
 
     async def _forward_to_client(self, websocket: WebSocket, session, user: dict):
@@ -126,32 +134,20 @@ class WebSocketService:
             while True:
                 try:
                     async for response in session.receive():
-                        print(f"Response type: {type(response).__name__}")
-
-                        # 디버깅을 위한 응답 구조 출력
-                        try:
-                            print(f"Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
-                        except:
-                            pass
-
                         # Function call 처리
                         if hasattr(response, 'function_calls') and response.function_calls:
-                            print(f"Processing {len(response.function_calls)} function calls")
                             for function_call in response.function_calls:
                                 await self._handle_function_call(session, function_call, user)
 
                         elif hasattr(response, 'function_call') and response.function_call:
-                            print("Processing single function call")
                             await self._handle_function_call(session, response.function_call, user)
 
                         # 오디오 응답 처리
                         elif hasattr(response, 'data') and response.data:
-                            print(f"Sending {len(response.data)} bytes audio to client")
                             await websocket.send_bytes(response.data)
 
                         # 텍스트 응답 처리 (전사 기능)
                         elif hasattr(response, 'text') and response.text:
-                            print(f"[AI]: {response.text}")
                             await rag_service.save_conversation_turn(
                                 user['username'], "assistant", response.text
                             )
@@ -164,7 +160,6 @@ class WebSocketService:
                             if hasattr(server_content, 'input_transcription') and server_content.input_transcription:
                                 transcription = server_content.input_transcription
                                 if hasattr(transcription, 'text') and transcription.text:
-                                    print(f"[사용자]: {transcription.text}")
                                     await rag_service.save_conversation_turn(
                                         user['username'], "user", transcription.text
                                     )
@@ -181,7 +176,6 @@ class WebSocketService:
                             if hasattr(server_content, 'output_transcription') and server_content.output_transcription:
                                 transcription = server_content.output_transcription
                                 if hasattr(transcription, 'text') and transcription.text:
-                                    print(f"[AI]: {transcription.text}")
                                     await rag_service.save_conversation_turn(
                                         user['username'], "assistant", transcription.text
                                     )
@@ -200,7 +194,6 @@ class WebSocketService:
                                 if hasattr(model_turn, 'parts'):
                                     for part in model_turn.parts:
                                         if hasattr(part, 'text') and part.text:
-                                            print(f"[AI 텍스트]: {part.text}")
                                             await rag_service.save_conversation_turn(
                                                 user['username'], "assistant", part.text
                                             )
@@ -212,26 +205,23 @@ class WebSocketService:
                                                 "text": part.text
                                             }
                                             await websocket.send_text(json.dumps(transcription_message))
-
-                        # 기타 응답 유형 로깅
-                        else:
-                            print(f"Unknown response type, skipping...")
+                                        
+                                        # executable_code 처리 - 이를 무시하고 계속 진행
+                                        elif hasattr(part, 'executable_code') and part.executable_code:
+                                            print(f"[EXECUTABLE CODE] Ignoring code execution: {part.executable_code.code[:100]}...")
+                                            # 코드 실행은 하지 않고 무시
 
                 except Exception as e:
-                    print(f"Error in response iteration: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    print(f"[ERROR] Response processing failed: {e}")
                     await asyncio.sleep(0.1)
                     continue
 
-                print("Response stream ended, waiting for next response...")
                 await asyncio.sleep(0.1)
 
         except WebSocketDisconnect:
-            print("Client disconnected during response forwarding.")
             raise
         except Exception as e:
-            print(f"Critical error in forward_to_client: {e}")
+            print(f"[ERROR] Response forwarding failed: {e}")
             raise
 
     async def _handle_function_call(self, session, function_call, user: dict):
@@ -239,10 +229,7 @@ class WebSocketService:
         function_name = function_call.name
         function_args = function_call.args if hasattr(function_call, 'args') else {}
 
-        print(f"=== Function Call Debug ===")
-        print(f"Function name: {function_name}")
-        print(f"Function args: {function_args}")
-        print(f"Function call ID: {getattr(function_call, 'id', 'N/A')}")
+        print(f"[FUNCTION CALL] {function_name}({function_args})")
 
         try:
             if function_name == "search_memories":
@@ -250,16 +237,14 @@ class WebSocketService:
                 query = function_args.get("query", "")
                 top_k = function_args.get("top_k", 3)
 
-                print(f"Searching memories for query: '{query}' (top_k: {top_k})")
                 memories = memory_service.retrieve_memories(query, top_k, user['username'])
 
                 # 검색 결과를 텍스트로 포맷팅
                 if memories:
                     memory_text = []
-                    for i, memory in enumerate(memories):
+                    for memory in memories:
                         content = memory.metadata.get('content', '')
                         score = memory.score
-                        print(f"Memory {i+1}: score={score:.3f}, content='{content[:50]}...'")
 
                         if score > 0.5:  # 관련성 임계값을 낮춤
                             category = memory.metadata.get('category', '')
@@ -275,15 +260,11 @@ class WebSocketService:
                 else:
                     result = "관련된 기억을 찾을 수 없습니다."
 
-                print(f"Search result: {result}")
-
             elif function_name == "save_new_memory":
                 # 새로운 기억 저장
                 content = function_args.get("content", "")
                 category = function_args.get("category", "일반")
                 importance = function_args.get("importance", "medium")
-
-                print(f"Saving new memory: content='{content}', category='{category}', importance='{importance}'")
 
                 metadata = {
                     "category": category,
@@ -293,11 +274,11 @@ class WebSocketService:
 
                 memory_id = memory_service.add_memory(user['username'], content, metadata)
                 result = f"기억이 저장되었습니다: {content}"
-                print(f"Memory saved with ID: {memory_id}")
 
             else:
                 result = f"알 수 없는 함수: {function_name}"
-                print(f"Unknown function: {function_name}")
+
+            print(f"[FUNCTION RESULT] {result}")
 
             # Function call 결과를 Gemini에 반환
             function_response = types.FunctionResponse(
@@ -306,13 +287,10 @@ class WebSocketService:
                 response={"result": result}
             )
 
-            print(f"Sending function response: {result[:100]}...")
             await session.send(function_response)
 
         except Exception as e:
-            print(f"Error handling function call: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[FUNCTION ERROR] {function_name}: {e}")
 
             try:
                 # 오류 응답 전송
@@ -323,7 +301,7 @@ class WebSocketService:
                 )
                 await session.send(error_response)
             except Exception as send_error:
-                print(f"Failed to send error response: {send_error}")
+                print(f"[ERROR] Failed to send function error response: {send_error}")
 
 # 전역 인스턴스 생성
 websocket_service = WebSocketService()
