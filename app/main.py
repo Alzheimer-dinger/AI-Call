@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
@@ -7,6 +7,7 @@ load_dotenv()
 
 # 설정과 초기화 모듈 먼저 로드
 from app.config import settings
+from app.core import genai
 
 # 라우터 임포트는 설정 이후에 수행
 from app.api import router as api_router
@@ -31,4 +32,10 @@ app.include_router(auth_router, prefix="/api/auth")
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Alzheimer Call AI Agent"}
+    with open("static/index.html") as f:
+        return Response(content=f.read(), media_type="text/html")
+
+@app.get("/memory")
+def read_memory_page():
+    with open("static/memory.html") as f:
+        return Response(content=f.read(), media_type="text/html")

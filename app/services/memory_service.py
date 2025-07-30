@@ -3,7 +3,7 @@ import time
 from typing import List
 from app.core import pinecone, genai
 from app.config import settings
-from app.models import MemoryItem, RetrievedMemory
+from app.models import Memory, MemorySearchResult
 from pinecone import ServerlessSpec
 
 class MemoryService:
@@ -46,7 +46,7 @@ class MemoryService:
 
         vectors_to_upsert = []
         for item in memories_data:
-            memory_item = MemoryItem(**item)
+            memory_item = Memory(**item)
             embedding = self.get_embedding(memory_item.content)
             vector = {
                 "id": memory_item.id,
@@ -59,26 +59,64 @@ class MemoryService:
             index.upsert(vectors=vectors_to_upsert)
         print(f"Uploaded {len(vectors_to_upsert)} vectors to Pinecone.")
 
-    def retrieve_memories(self, query: str, top_k: int = 3) -> List[RetrievedMemory]:
+    def retrieve_memories(self, query: str, top_k: int = 3, user_id: str = None) -> List[MemorySearchResult]:
         """주어진 쿼리와 가장 유사한 기억을 Pinecone에서 검색합니다."""
         index = pinecone.Index(self.index_name)
         query_embedding = self.get_embedding(query)
 
-        results = index.query(
-            vector=query_embedding,
-            top_k=top_k,
-            include_metadata=True
-        )
+        if user_id:
+            results = index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                include_metadata=True,
+                filter={"user_id": {"$eq": user_id}}
+            )
+        else:
+            results = index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                include_metadata=True
+            )
 
         retrieved_memories = []
         if results.get("matches"):
             for match in results["matches"]:
-                retrieved_memories.append(RetrievedMemory(
+                retrieved_memories.append(MemorySearchResult(
                     score=match.get("score", 0.0),
                     metadata=match.get("metadata", {})
                 ))
 
         return retrieved_memories
+
+    def add_memory(self, user_id: str, content: str, metadata: dict) -> str:
+        """새로운 기억을 Pinecone에 추가합니다."""
+        try:
+            import uuid
+            index = pinecone.Index(self.index_name)
+            memory_id = str(uuid.uuid4())
+            
+            # 메타데이터에 user_id와 content 추가
+            metadata["user_id"] = user_id
+            metadata["content"] = content
+            
+            # 임베딩 생성
+            embedding = self.get_embedding(content)
+            
+            # 벡터 생성
+            vector = {
+                "id": memory_id,
+                "values": embedding,
+                "metadata": metadata
+            }
+            
+            # Pinecone에 업서트
+            index.upsert(vectors=[vector])
+            print(f"Memory added for user {user_id}: {memory_id}")
+            
+            return memory_id
+        except Exception as e:
+            print(f"Error adding memory: {e}")
+            raise
 
 memory_service = MemoryService()
 

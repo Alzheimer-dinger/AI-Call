@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import generativeai as genai
 from pinecone import Pinecone
 from app.config import settings
 

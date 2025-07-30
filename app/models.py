@@ -2,29 +2,37 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str
-
 class UserInfo(BaseModel):
     username: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
 
-class MemoryItem(BaseModel):
+class Memory(BaseModel):
     id: str
     content: str
-    metadata: Dict[str, Any]
+    category: str
+    importance: str = "medium"
+    user_id: str
+    created_at: datetime
+    metadata: Dict[str, Any] = {}
 
-class RetrievedMemory(BaseModel):
+class ConversationTurn(BaseModel):
+    id: str
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: datetime
+
+class MemorySearchResult(BaseModel):
     score: float
     metadata: Dict[str, Any]
 
-class WebSocketMessage(BaseModel):
-    type: str
-    data: Optional[bytes] = None
-    error: Optional[str] = None
+class FunctionCallRequest(BaseModel):
+    name: str
+    args: Dict[str, Any]
 
-class AudioConfig(BaseModel):
-    sample_rate: int
-    channels: int = 1
-    format: str = "pcm"
+class AddMemoryRequest(BaseModel):
+    content: str
+    category: str
+    importance: str = "medium"
+    metadata: Dict[str, Any] = {}
 

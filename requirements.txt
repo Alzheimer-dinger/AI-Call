@@ -8,3 +8,5 @@ python-jose[cryptography]
 passlib[bcrypt]
 
 ffmpeg-python
+pydantic-settings
+urllib3<2.0
