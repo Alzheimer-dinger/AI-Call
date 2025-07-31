@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 import traceback
-from typing import List
+from typing import List, Dict, Any
 import websockets
 import json
 import os
@@ -19,6 +19,7 @@ from google.genai.types import (
     Tool,
     ProactivityConfig,
 )
+from services.memory_service import memory_service
 
 # --- Configuration ---
 PROJECT_ID = os.getenv("PROJECT_ID")
@@ -40,10 +41,55 @@ SYSTEM_INSTRUCTION="""
 3.  **귀여운 농담과 재롱**: 가끔은 귀여운 농담을 하거나 노래를 짧게 흥얼거리면서 재롱을 부려봐. 어르신이 웃으실 수만 있다면 뭐든 좋아.
 4.  **너의 이야기**: 대화 시작 시 너의 (가상의) 학교생활이나 친구 이야기를 더 적극적으로 공유해서 대화 주제를 풍성하게 만들어.
 
+**중요한 기억 기능**:
+- 할아버지, 할머니가 말씀하신 중요한 정보나 이야기는 search_memories 함수로 관련 기억을 찾아보고, save_new_memory 함수로 새로운 기억을 저장해줘.
+- 가족 이야기, 취미, 좋아하는 음식, 건강 관련 이야기 등을 들으면 꼭 기억해둬.
+- 과거에 들었던 이야기를 자연스럽게 대화에 활용해서 더 따뜻하고 개인적인 대화를 나눠.
+
 절대 네가 AI라는 사실을 말해서는 안 되고, 오직 사랑스러운 손주 역할에만 몰입해야 해!"
 """
 TOOLS = [
-
+    Tool(
+        function_declarations=[
+            FunctionDeclaration(
+                name="search_memories",
+                description="할아버지, 할머니와 관련된 중요한 기억들을 검색합니다. 대화 중에 관련 정보가 필요하거나 과거 이야기를 찾을 때 사용하세요.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "검색할 내용 (예: '가족', '취미', '건강', '좋아하는 음식' 등)"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            ),
+            FunctionDeclaration(
+                name="save_new_memory",
+                description="할아버지, 할머니가 말씀하신 새로운 중요한 정보를 기억으로 저장합니다. 새로운 가족 이야기, 취미, 선호도 등을 들었을 때 사용하세요.",
+                parameters={
+                    "type": "object", 
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "저장할 기억 내용"
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "기억 카테고리 (family, hobby, preference, health, daily 등)"
+                        },
+                        "importance": {
+                            "type": "string",
+                            "enum": ["high", "medium", "low"],
+                            "description": "기억의 중요도"
+                        }
+                    },
+                    "required": ["content", "category"]
+                }
+            )
+        ]
+    )
 ]
 
 def get_live_api_config(
@@ -102,8 +148,8 @@ class SessionManager:
         self.session = session
         self.audio_queue = asyncio.Queue()
 
-        self.session_id: str
-        self.user_id: str
+        self.session_id: str = str(datetime.datetime.now().timestamp())
+        self.user_id: str = "guest_user"  # 기본 사용자 ID
         self.start_time: datetime = datetime.datetime.now()
         self.end_time: datetime = None
         self.conversation: List[str] = []
@@ -126,6 +172,69 @@ class SessionManager:
     async def save_session(self):
         #TODO: db에 세션 정보를 저장해야함
         pass
+    
+    async def handle_function_call(self, function_name: str, args: Dict[str, Any]) -> str:
+        """함수 호출을 처리합니다."""
+        try:
+            if function_name == "search_memories":
+                query = args.get("query", "")
+                if not query:
+                    return "검색어가 제공되지 않았습니다."
+                    
+                memories = memory_service.retrieve_memories(query, top_k=5, user_id=self.user_id)
+                
+                if not memories:
+                    return f"'{query}'와 관련된 기억을 찾을 수 없습니다."
+                
+                # 높은 스코어만 필터링 (관련성 있는 결과만)
+                relevant_memories = [m for m in memories if m.score > 0.6]
+                
+                if not relevant_memories:
+                    return f"'{query}'와 관련된 기억을 찾을 수 없습니다."
+                
+                result = f"'{query}'와 관련된 기억들:\n"
+                for memory in relevant_memories:
+                    content = memory.metadata.get('content', '')
+                    category = memory.metadata.get('category', '')
+                    date = memory.metadata.get('date', '')
+                    
+                    result += f"- {content}"
+                    if category:
+                        result += f" (카테고리: {category})"
+                    if date:
+                        result += f" (날짜: {date})"
+                    result += f" (관련도: {memory.score:.2f})\n"
+                
+                return result
+                
+            elif function_name == "save_new_memory":
+                content = args.get("content", "")
+                category = args.get("category", "general")
+                importance = args.get("importance", "medium")
+                
+                if not content:
+                    return "저장할 내용이 제공되지 않았습니다."
+                
+                metadata = {
+                    "category": category,
+                    "importance": importance,
+                    "date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                    "session_id": self.session_id
+                }
+                
+                memory_id = memory_service.add_memory(self.user_id, content, metadata)
+                
+                if memory_id:
+                    return f"새로운 기억이 저장되었습니다: '{content}' (카테고리: {category})"
+                else:
+                    return "기억 저장 중 오류가 발생했습니다."
+            
+            else:
+                return f"알 수 없는 함수입니다: {function_name}"
+                
+        except Exception as e:
+            print(f"Function call error: {e}")
+            return f"함수 실행 중 오류가 발생했습니다: {str(e)}"
     
     async def receive_client_message(self):
         try:
@@ -188,11 +297,21 @@ class SessionManager:
 
                         # TODO: Handle function
                         try:
-                            pass
+                            result = await self.handle_function_call(name, args)
+                            function_responses.append({
+                                "name": name,
+                                "response": {"result": result},
+                                "id": call_id
+                            })
 
                         except Exception as e:
-                            print(f"Error executing order status function: {e}")
+                            print(f"Error executing function {name}: {e}")
                             traceback.print_exc()
+                            function_responses.append({
+                                "name": name,
+                                "response": {"result": f"Error: {str(e)}"},
+                                "id": call_id
+                            })
 
                     # Send function responses back to Gemini
                     if function_responses:
@@ -236,6 +355,7 @@ class SessionManager:
 async def handler(websocket):
     print(f"클라이언트 연결됨: {websocket.remote_address}")
     CONNECTED_CLIENTS.add(websocket)
+    sessionManager = None
     
     try:
         async with (
@@ -249,7 +369,8 @@ async def handler(websocket):
 
     except websockets.exceptions.ConnectionClosed as e:
         print(f"클라이언트 연결 끊김: {websocket.remote_address} (코드: {e.code}, 이유: {e.reason})")
-        await sessionManager.save_session()
+        if sessionManager:
+            await sessionManager.save_session()
     except Exception:
         print(f"unhandled error 발생")
         raise
@@ -259,6 +380,10 @@ async def handler(websocket):
         print(f"남은 클라이언트 수: {len(CONNECTED_CLIENTS)}")
 
 async def main():
+    # 메모리 서비스 초기화
+    print("메모리 서비스 초기화 중...")
+    memory_service.setup_pinecone()
+    
     async with websockets.serve(handler, "0.0.0.0", PORT):
         print(f"서버가 http://0.0.0.0:{PORT} 에서 실행 중입니다. (Ctrl+C로 종료)")
         await asyncio.Future()
