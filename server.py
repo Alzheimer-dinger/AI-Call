@@ -101,27 +101,27 @@ def get_live_api_config(
     # ),
     voice_name="Despina",
     system_instruction=SYSTEM_INSTRUCTION,
-    tools=[],
+    tools=TOOLS,
     # proactivity=ProactivityConfig(proactive_audio=True),   
 ):
     return LiveConnectConfig(
-    response_modalities=response_modalities,
-    output_audio_transcription={},
-    input_audio_transcription={},
-    # session_resumption=types.SessionResumptionConfig(
-    # The handle of the session to resume is passed here,
-    # or else None to start a new session.
-    # handle="93f6ae1d-2420-40e9-828c-776cf553b7a6"
-    # ),
-    speech_config=SpeechConfig(
-        voice_config=VoiceConfig(
-            prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice_name)
-        )
-    ),
-    system_instruction=system_instruction,
-    tools=TOOLS,
-    # proactivity=ProactivityConfig(proactive_audio=True),
-)
+        response_modalities=response_modalities,
+        output_audio_transcription={},
+        input_audio_transcription={},
+        # session_resumption=types.SessionResumptionConfig(
+        # The handle of the session to resume is passed here,
+        # or else None to start a new session.
+        # handle="93f6ae1d-2420-40e9-828c-776cf553b7a6"
+        # ),
+        speech_config=SpeechConfig(
+            voice_config=VoiceConfig(
+                prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice_name)
+            )
+        ),
+        system_instruction=system_instruction,
+        tools=tools,
+        # proactivity=ProactivityConfig(proactive_audio=True),
+    )
 
 CONNECTED_CLIENTS = set()
 class ResponseType:
