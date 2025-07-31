@@ -3,6 +3,10 @@ class GeminiAPI {
     constructor(endpoint) {
         this.endpoint = endpoint;
         this.ws = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.reconnectDelay = 1000; // 1초
+        this.isManualDisconnect = false;
 
         // 이벤트 핸들러 콜백
         this.onOpen = () => {}; // 서버와 연결
@@ -16,8 +20,22 @@ class GeminiAPI {
     }
 
     connect() {
+        this.isManualDisconnect = false;
         this.ws = new WebSocket(this.endpoint);
         this._setupWebSocketHandlers();
+    }
+
+    reconnect() {
+        if (this.isManualDisconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
+            return;
+        }
+
+        this.reconnectAttempts++;
+        console.log(`재연결 시도 ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+        
+        setTimeout(() => {
+            this.connect();
+        }, this.reconnectDelay * this.reconnectAttempts);
     }
 
     sendAudio(audioBuffer) {
@@ -27,6 +45,7 @@ class GeminiAPI {
     }
 
     close() {
+        this.isManualDisconnect = true;
         if (this.ws) {
             this.ws.close();
         }
@@ -35,17 +54,28 @@ class GeminiAPI {
     _setupWebSocketHandlers() {
         this.ws.onopen = (event) => {
             console.log("WebSocket 연결 성공");
+            this.reconnectAttempts = 0; // 연결 성공 시 재연결 카운트 리셋
             this.onOpen(event);
         };
 
         this.ws.onmessage = (event) => {
-            const payload = JSON.parse(event.data);
-            this._handleServerMessage(payload);
+            try {
+                const payload = JSON.parse(event.data);
+                this._handleServerMessage(payload);
+            } catch (error) {
+                console.error("메시지 파싱 오류:", error);
+            }
         };
 
         this.ws.onclose = (event) => {
             console.log("웹소켓 연결이 종료되었습니다.", event.reason);
             this.onClose(event);
+            
+            // 수동 종료가 아닌 경우에만 재연결 시도
+            if (!this.isManualDisconnect && event.code !== 1000) {
+                console.log("예상치 못한 연결 종료, 재연결 시도");
+                this.reconnect();
+            }
         };
 
         this.ws.onerror = (error) => {
@@ -127,7 +157,16 @@ class StreamingAudioPlayer {
             this.isPlaying = false;
             return;
         }
-        if(!this.audioContext || this.audioContext.state === 'closed') return;
+        // 오디오 컨텍스트 상태 복구 시도
+        if(!this.audioContext || this.audioContext.state === 'closed') {
+            console.log("오디오 컨텍스트 재생성 시도");
+            this._ensureAudioContext();
+            if(!this.audioContext || this.audioContext.state === 'closed') {
+                console.error("오디오 컨텍스트 복구 실패");
+                this.isPlaying = false;
+                return;
+            }
+        }
 
         const audioChunk = this.audioQueue.shift();
         const buffer = this.audioContext.createBuffer(1, audioChunk.length, this.sampleRate);
@@ -150,7 +189,16 @@ class StreamingAudioPlayer {
             if (this.isPlaying) {
                 this.scheduleNextChunk();
             }
-        }
+        };
+        
+        // 오디오 소스 에러 처리 추가
+        source.onerror = (error) => {
+            console.error("오디오 소스 에러:", error);
+            this.activeSources = this.activeSources.filter(s => s !== source);
+            if (this.isPlaying) {
+                this.scheduleNextChunk();
+            }
+        };
     }
 
     // Interrupt를 처리하는 새로운 메소드

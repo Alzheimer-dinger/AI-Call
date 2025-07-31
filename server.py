@@ -26,9 +26,9 @@ PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION")
 MODEL = os.getenv("GEMINI_MODEL")
 
-client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+# client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 # Google AI Studio API Key를 사용하려면
-# client = genai.Client(vertexai=False, api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(vertexai=False, api_key=os.getenv("GEMINI_API_KEY"))
 SEND_SAMPLE_RATE = 16000
 PORT = 8765
 SYSTEM_INSTRUCTION="""
@@ -265,92 +265,103 @@ class SessionManager:
             input_transcriptions = []
             output_transcriptions = []
 
-            async for response in self.session.receive():
-                server_content = response.server_content
+            try:
+                async for response in self.session.receive():
+                    server_content = response.server_content
 
-                if response.session_resumption_update:
-                    update = response.session_resumption_update
-                    if update.resumable and update.new_handle:
-                        # The handle should be retained and linked to the session.
-                        print(f"new SESSION: {update.new_handle}")
-                
-                # Check if the connection will be soon terminated
-                if response.go_away is not None:
-                    print(response.go_away.time_left)
+                    if response.session_resumption_update:
+                        update = response.session_resumption_update
+                        if update.resumable and update.new_handle:
+                            # The handle should be retained and linked to the session.
+                            print(f"new SESSION: {update.new_handle}")
+                    
+                    # Check if the connection will be soon terminated
+                    if response.go_away is not None:
+                        print(f"Connection will be terminated in: {response.go_away.time_left}")
 
-                if response.server_content and response.server_content.interrupted is True:
-                    # The generation was interrupted by the user.
-                    print("Interrupted")
-                    await self.websocket.send(to_payload(ResponseType.INTERRUPT, ""))
-                    continue
-
-                # Handle tool calls
-                if response.tool_call:
-                    print(f"Tool call received: {response.tool_call}")
-
-                    function_responses = []
-
-                    for function_call in response.tool_call.function_calls:
-                        name = function_call.name
-                        args = function_call.args
-                        call_id = function_call.id
-
-                        # TODO: Handle function
-                        try:
-                            result = await self.handle_function_call(name, args)
-                            function_responses.append({
-                                "name": name,
-                                "response": {"result": result},
-                                "id": call_id
-                            })
-
-                        except Exception as e:
-                            print(f"Error executing function {name}: {e}")
-                            traceback.print_exc()
-                            function_responses.append({
-                                "name": name,
-                                "response": {"result": f"Error: {str(e)}"},
-                                "id": call_id
-                            })
-
-                    # Send function responses back to Gemini
-                    if function_responses:
-                        print(f"Sending function responses: {function_responses}")
-                        for response in function_responses:
-                            await self.session.send_tool_response(
-                                function_responses={
-                                    "name": response["name"],
-                                    "response": response["response"]["result"],
-                                    "id": response["id"],
-                                }
-                            )
+                    if response.server_content and response.server_content.interrupted is True:
+                        # The generation was interrupted by the user.
+                        print("Generation interrupted by user")
+                        await self.websocket.send(to_payload(ResponseType.INTERRUPT, ""))
                         continue
+
+                    # Handle tool calls
+                    if response.tool_call:
+                        print(f"Tool call received: {response.tool_call}")
+
+                        function_responses = []
+
+                        for function_call in response.tool_call.function_calls:
+                            name = function_call.name
+                            args = function_call.args
+                            call_id = function_call.id
+
+                            try:
+                                result = await self.handle_function_call(name, args)
+                                function_responses.append({
+                                    "name": name,
+                                    "response": {"result": result},
+                                    "id": call_id
+                                })
+                                print(f"Function {name} executed successfully")
+
+                            except Exception as e:
+                                error_msg = f"Error executing function {name}: {e}"
+                                print(error_msg)
+                                traceback.print_exc()
+                                function_responses.append({
+                                    "name": name,
+                                    "response": {"result": f"Error: {str(e)}"},
+                                    "id": call_id
+                                })
+
+                        # Send function responses back to Gemini
+                        if function_responses:
+                            print(f"Sending function responses: {function_responses}")
+                            for func_response in function_responses:
+                                await self.session.send_tool_response(
+                                    function_responses={
+                                        "name": func_response["name"],
+                                        "response": func_response["response"]["result"],
+                                        "id": func_response["id"],
+                                    }
+                                )
+                            # continue 제거 - 함수 응답 후에도 오디오 생성이 계속되도록 함
+                    
+                    if server_content and server_content.model_turn:
+                        for part in server_content.model_turn.parts:
+                            if part.inline_data:
+                                encoded_audio = base64.b64encode(part.inline_data.data).decode('utf-8')
+                                await self.websocket.send(to_payload(ResponseType.AUDIO, encoded_audio))
+
+                    input_transcription = getattr(response.server_content, "input_transcription", None)
+                    if input_transcription and input_transcription.text:
+                        input_transcriptions.append(input_transcription.text)
+                        await self.websocket.send(to_payload(ResponseType.INPUT_TRANSCRIPT, input_transcription.text))
+
+                    output_transcription = getattr(response.server_content, "output_transcription", None)
+                    if output_transcription and output_transcription.text:
+                        output_transcriptions.append(output_transcription.text)
+                        await self.websocket.send(to_payload(ResponseType.OUTPUT_TRANSCRIPT, output_transcription.text))
+                    
+                    if server_content and server_content.turn_complete:
+                        await self.websocket.send(to_payload(ResponseType.TRUN_COMPLETE, server_content.turn_complete))
+                        print("Gemini response complete")
                 
-                if server_content and server_content.model_turn:
-                    for part in server_content.model_turn.parts:
-                        if part.inline_data:
-                            encoded_audio = base64.b64encode(part.inline_data.data).decode('utf-8')
-                            await self.websocket.send(to_payload(ResponseType.AUDIO, encoded_audio))
+                print(f"Input transcription: {''.join(input_transcriptions)}")
+                self.add_transcription(ResponseType.INPUT_TRANSCRIPT, input_transcriptions)
 
-                input_transcription = getattr(response.server_content, "input_transcription", None)
-                if input_transcription and input_transcription.text:
-                    input_transcriptions.append(input_transcription.text)
-                    await self.websocket.send(to_payload(ResponseType.INPUT_TRANSCRIPT, input_transcription.text))
-
-                output_transcription = getattr(response.server_content, "output_transcription", None)
-                if output_transcription and output_transcription.text:
-                    output_transcriptions.append(output_transcription.text)
-                    await self.websocket.send(to_payload(ResponseType.OUTPUT_TRANSCRIPT, output_transcription.text))
+                print(f"Output transcription: {''.join(output_transcriptions)}")
+                self.add_transcription(ResponseType.OUTPUT_TRANSCRIPT, output_transcriptions)
                 
-                if server_content and server_content.turn_complete:
-                    await self.websocket.send(to_payload(ResponseType.TRUN_COMPLETE, server_content.turn_complete))
-                    print("Gemini done talking")
-            
-            print(f"Input transcription: {''.join(input_transcriptions)}")
-            self.add_transcription(ResponseType.INPUT_TRANSCRIPT, input_transcriptions)
-
-            print(f"Output transcription: {''.join(output_transcriptions)}")
-            self.add_transcription(ResponseType.OUTPUT_TRANSCRIPT, output_transcriptions)
+            except Exception as e:
+                print(f"Error in process_gemini_response: {e}")
+                traceback.print_exc()
+                # 연결이 끊어진 경우 루프 종료
+                if "connection" in str(e).lower() or "closed" in str(e).lower():
+                    break
+                # 다른 오류의 경우 계속 시도
+                await asyncio.sleep(1)
 
 async def handler(websocket):
     print(f"클라이언트 연결됨: {websocket.remote_address}")
