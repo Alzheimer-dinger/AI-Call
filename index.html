@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Live Client</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #f4f4f9; color: #333; }
+        h1 { color: #4a4a4a; }
+        #controls { margin-bottom: 20px; }
+        button { background-color: #4285F4; color: white; border: none; padding: 10px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer; border-radius: 8px; transition: background-color 0.3s; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        button:hover:not(:disabled) { background-color: #357ae8; }
+        #status { margin-bottom: 20px; font-size: 1.1em; padding: 10px; border-radius: 5px; background-color: #e7e7e7; min-width: 250px; text-align: center; }
+        #transcripts { width: 80%; max-width: 600px; border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: scroll; background-color: white; border-radius: 8px; }
+        .transcript-wrapper { margin-bottom: 10px; }
+        .user-transcript { color: #0056b3; text-align: right; }
+        .ai-transcript { color: #28a745; text-align: left; }
+        .transcript-label { font-size: 0.8em; color: #6c757d; }
+        .user-transcript .transcript-label { text-align: right; display: block; }
+        .ai-transcript .transcript-label { text-align: left; display: block; }
+    </style>
+</head>
+<body>
+    <h1>Gemini Live Client</h1>
+
+    <div id="controls">
+        <button id="connectBtn">연결 및 녹음 시작</button>
+        <button id="disconnectBtn" disabled>연결 끊기</button>
+    </div>
+
+    <div id="status">연결되지 않음</div>
+
+    <div id="transcripts"></div>
+
+    <!-- 외부 JavaScript 파일 로드 -->
+    <script src="gemini-client.js"></script>
+</body>
+</html>
