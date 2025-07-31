@@ -27,7 +27,7 @@ MODEL = os.getenv("GEMINI_MODEL")
 
 client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 # Google AI Studio API Key를 사용하려면
-client = genai.Client(vertexai=False, api_key=os.getenv("GEMINI_API_KEY"))
+# client = genai.Client(vertexai=False, api_key=os.getenv("GEMINI_API_KEY"))
 SEND_SAMPLE_RATE = 16000
 PORT = 8765
 SYSTEM_INSTRUCTION="""
