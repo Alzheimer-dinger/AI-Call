@@ -5,11 +5,15 @@ import traceback
 from typing import List, Dict, Any
 from fastapi import WebSocket, WebSocketDisconnect
 
+from models.models import ConversationLog, ConversationTurn, SpeakerEnum
 from settings import ResponseType, SEND_SAMPLE_RATE, MEMORY_RELEVANCE_THRESHOLD, MAX_MEMORY_RESULTS
 from managers.websocket_manager import PayloadManager
 from services.memory_service import memory_service
 
 from google.genai.types import FunctionResponse
+
+from pymongo.errors import PyMongoError
+from database import transcripts_collection
 
 class SessionManager:
     """개별 세션을 관리하는 클래스"""
@@ -24,7 +28,7 @@ class SessionManager:
         self.user_id: str = "guest_user"  # 기본 사용자 ID
         self.start_time: datetime.datetime = datetime.datetime.now()
         self.end_time: datetime.datetime = None
-        self.conversation: List[Dict] = []  # 타입 수정
+        self.conversation: List[ConversationTurn] = []  # 타입 수정
         self.input_audio_chunks: List = []
 
     async def add_audio(self, message):
@@ -37,39 +41,33 @@ class SessionManager:
         """대화 내용을 기록에 추가"""
         # 스피커 타입 정규화
         if speaker == ResponseType.INPUT_TRANSCRIPT:
-            speaker = "user"
+            speaker = SpeakerEnum.PATIENT
         elif speaker == ResponseType.OUTPUT_TRANSCRIPT:
-            speaker = "ai"
+            speaker = SpeakerEnum.AI
 
         content_text = ''.join(content) if isinstance(content, list) else content
         if content_text.strip():  # 빈 내용은 저장하지 않음
-            self.conversation.append({
-                "speaker": speaker, 
-                "content": content_text,
-                "timestamp": datetime.datetime.now().isoformat()
-            })
+            self.conversation.append(ConversationTurn(speaker=speaker, content=content_text))
 
     async def save_session(self):
         """세션 정보를 DB에 저장"""
-        session_data = {
-            "session_id": self.session_id,
-            "user_id": self.user_id,
-            "start_time": self.start_time.isoformat(),
-            "end_time": datetime.datetime.now().isoformat(),
-            "conversation": self.conversation
-        }
-        
-        # TODO: DB에 세션 정보를 저장
-        print(f"세션 저장됨: {self.session_id}, 대화 수: {len(self.conversation)}")
-    
-    async def save_conversation_turn(self, role: str, content: str):
-        """대화 턴을 저장합니다"""
-        conversation_turn = {
-            "role": role,
-            "content": content,
-            "timestamp": datetime.datetime.now().isoformat()
-        }
-        self.conversation.append(conversation_turn)
+        try:
+            log = ConversationLog(
+                user_id=self.user_id,
+                start_time=self.start_time,
+                end_time=self.end_time,
+                conversation=self.conversation
+            )
+
+            result = await transcripts_collection.insert_one(log)
+                
+            print(f"세션 저장 성공: {self.session_id}, DB ID: {result.inserted_id}")
+            
+        except PyMongoError as e:
+            print(f"MongoDB 저장 중 오류 발생: {e}")
+            
+        except Exception as e:
+            print(f"세션 저장 중 예기치 않은 오류 발생: {e}")
 
     async def handle_function_call(self, function_name: str, args: Dict[str, Any]) -> str:
         """함수 호출을 처리"""
@@ -107,8 +105,6 @@ class SessionManager:
             print(f"[DEBUG] No memories found for query '{query}'")
             return f"'{query}'와 관련된 기억을 찾을 수 없습니다."
         
-        
-
         # 높은 스코어만 필터링 (관련성 있는 결과만)
         relevant_memories = [m for m in memories if m.score > 0.6]
         print(f"[DEBUG] Filtered to {len(relevant_memories)} relevant memories (score > 0.6)")
@@ -164,12 +160,15 @@ class SessionManager:
                 await self.add_audio(message)
         except WebSocketDisconnect as e:
             print("오디오 수신 중 WebSocket 연결이 종료되었습니다.")
-            raise e
+            self.websocket.close()
+
         except Exception as e:
             print(f"메시지 수신 중 오류: {e}")
-            raise e
+            self.websocket.close()
+
         finally:
             await self.add_audio(None)  # 스트림 종료 신호
+            self.websocket.close()
 
     async def forward_to_gemini(self):
         """오디오 데이터를 Gemini로 전달"""
@@ -190,7 +189,8 @@ class SessionManager:
             except Exception as e:
                 print(f"Gemini로 데이터 전송 중 오류: {e}")
             
-            self.audio_queue.task_done()
+            finally:
+                self.audio_queue.task_done()
     
     async def process_gemini_response(self):
         """Gemini 응답 처리"""
