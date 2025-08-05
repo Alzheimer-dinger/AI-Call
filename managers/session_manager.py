@@ -186,8 +186,6 @@ class SessionManager:
                         "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}",
                     }
                 )
-            
-                await self.process_gemini_response()
 
             except Exception as e:
                 print(f"Gemini로 데이터 전송 중 오류: {e}")
