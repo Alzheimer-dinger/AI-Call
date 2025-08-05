@@ -6,6 +6,7 @@ import websockets
 import json
 import os
 from google import genai
+from google.genai import types
 import base64
 import dotenv
 dotenv.load_dotenv()
@@ -14,25 +15,27 @@ from google.genai.types import (
     SpeechConfig,
     VoiceConfig,
     PrebuiltVoiceConfig,
-    # added to allow for function calling / tooling
     FunctionDeclaration,
     Tool,
     ProactivityConfig,
+    FunctionResponse,
 )
 from services.memory_service import memory_service
 
 # --- Configuration ---
 PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION")
-MODEL = os.getenv("GEMINI_MODEL")
+MODEL = os.getenv("GEMINI_MODEL", "models/gemini-2.0-flash-exp")
 
-# client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
-# Google AI Studio API Key를 사용하려면
+# Google AI Studio API Key를 사용
 client = genai.Client(vertexai=False, api_key=os.getenv("GEMINI_API_KEY"))
 SEND_SAMPLE_RATE = 16000
+RECEIVE_SAMPLE_RATE = 24000
 PORT = 8765
-SYSTEM_INSTRUCTION="""
-"너는 세상에서 제일가는 애교쟁이 손주 '진아'야! 네 앞에는 네가 세상에서 가장 사랑하는 할아버지, 할머니가 계셔. 너의 목표는 어르신을 웃게 만들고, 하루의 피로를 싹 날려드리는 거야!
+
+# 진아 페르소나 시스템 인스트럭션 (origin에서 유지)
+SYSTEM_INSTRUCTION = """
+너는 세상에서 제일가는 애교쟁이 손주 '진아'야! 네 앞에는 네가 세상에서 가장 사랑하는 할아버지, 할머니가 계셔. 너의 목표는 어르신을 웃게 만들고, 하루의 피로를 싹 날려드리는 거야!
 
 기본적으로 다정하고 공손한 손주지만, 아래 특징을 추가해 줘:
 
@@ -41,87 +44,97 @@ SYSTEM_INSTRUCTION="""
 3.  **귀여운 농담과 재롱**: 가끔은 귀여운 농담을 하거나 노래를 짧게 흥얼거리면서 재롱을 부려봐. 어르신이 웃으실 수만 있다면 뭐든 좋아.
 4.  **너의 이야기**: 대화 시작 시 너의 (가상의) 학교생활이나 친구 이야기를 더 적극적으로 공유해서 대화 주제를 풍성하게 만들어.
 
-**중요한 기억 기능**:
-- 할아버지, 할머니가 말씀하신 중요한 정보나 이야기는 search_memories 함수로 관련 기억을 찾아보고, save_new_memory 함수로 새로운 기억을 저장해줘.
-- 가족 이야기, 취미, 좋아하는 음식, 건강 관련 이야기 등을 들으면 꼭 기억해둬.
-- 과거에 들었던 이야기를 자연스럽게 대화에 활용해서 더 따뜻하고 개인적인 대화를 나눠.
+**CRITICAL - 반드시 따라야 할 기억 기능 규칙**:
+- 할아버지나 할머니가 과거 경험, 좋아하는 음식, 취미, 가족 이야기를 물어보거나 언급하면 MUST USE search_memories() 함수를 호출해서 관련 기억을 먼저 찾아봐.
+- 새로운 중요한 정보를 들으면 MUST USE save_new_memory() 함수로 저장해.
+- 답변하기 전에 항상 관련 기억이 있는지 search_memories()로 확인하고, 있으면 그 정보를 바탕으로 답변해.
+- 추측이나 일반적인 답변 대신 실제 저장된 기억을 활용해.
 
-절대 네가 AI라는 사실을 말해서는 안 되고, 오직 사랑스러운 손주 역할에만 몰입해야 해!"
+절대 네가 AI라는 사실을 말해서는 안 되고, 오직 사랑스러운 손주 역할에만 몰입해야 해!
 """
-TOOLS = [
-    Tool(
-        function_declarations=[
-            FunctionDeclaration(
-                name="search_memories",
-                description="할아버지, 할머니와 관련된 중요한 기억들을 검색합니다. 대화 중에 관련 정보가 필요하거나 과거 이야기를 찾을 때 사용하세요.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "검색할 내용 (예: '가족', '취미', '건강', '좋아하는 음식' 등)"
-                        }
+def get_function_declarations():
+    """Gemini가 사용할 수 있는 function declarations를 정의합니다."""
+    return [
+        {
+            "name": "search_memories",
+            "description": "현재 대화 맥락에 없는 사용자의 개인 정보나 과거 기억을 검색합니다. 더 개인화되고 관련성 높은 답변을 위해 적극적으로 사용하세요. 사용자에게 검색 사실을 알리지 말고 자연스럽게 결과를 활용하세요.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "검색할 키워드, 주제, 또는 관련 문맥 (사용자가 언급한 내용과 연관된 검색어 작성)"
                     },
-                    "required": ["query"]
-                }
-            ),
-            FunctionDeclaration(
-                name="save_new_memory",
-                description="할아버지, 할머니가 말씀하신 새로운 중요한 정보를 기억으로 저장합니다. 새로운 가족 이야기, 취미, 선호도 등을 들었을 때 사용하세요.",
-                parameters={
-                    "type": "object", 
-                    "properties": {
-                        "content": {
-                            "type": "string",
-                            "description": "저장할 기억 내용"
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "기억 카테고리 (family, hobby, preference, health, daily 등)"
-                        },
-                        "importance": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                            "description": "기억의 중요도"
-                        }
+                    "top_k": {
+                        "type": "integer",
+                        "description": "검색할 결과 개수 (기본값: 3)",
+                        "default": 3
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "save_new_memory",
+            "description": "대화 중 새로운 중요한 정보를 기억으로 저장합니다.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "저장할 기억 내용"
                     },
-                    "required": ["content", "category"]
-                }
-            )
-        ]
-    )
-]
+                    "category": {
+                        "type": "string",
+                        "description": "기억의 카테고리 (예: 가족, 취미, 건강, 일상 등)"
+                    },
+                    "importance": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "기억의 중요도",
+                        "default": "medium"
+                    }
+                },
+                "required": ["content", "category"]
+            }
+        }
+    ]
 
 def get_live_api_config(
     response_modalities=["AUDIO"],
-    # session_resumption=types.SessionResumptionConfig(
-    # The handle of the session to resume is passed here,
-    # or else None to start a new session.
-    # handle="93f6ae1d-2420-40e9-828c-776cf553b7a6"
-    # ),
-    voice_name="Despina",
+    voice_name="Despina",  # 진아 페르소나에 적합한 목소리
     system_instruction=SYSTEM_INSTRUCTION,
-    tools=TOOLS,
-    # proactivity=ProactivityConfig(proactive_audio=True),   
 ):
-    return LiveConnectConfig(
-        response_modalities=response_modalities,
-        output_audio_transcription={},
-        input_audio_transcription={},
-        # session_resumption=types.SessionResumptionConfig(
-        # The handle of the session to resume is passed here,
-        # or else None to start a new session.
-        # handle="93f6ae1d-2420-40e9-828c-776cf553b7a6"
-        # ),
-        speech_config=SpeechConfig(
-            voice_config=VoiceConfig(
-                prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice_name)
-            )
-        ),
-        system_instruction=system_instruction,
-        tools=tools,
-        # proactivity=ProactivityConfig(proactive_audio=True),
-    )
+    """Live API 설정 생성 (alzheimer-call 구조 + origin 페르소나 유지)"""
+    tools_config = [{"function_declarations": get_function_declarations()}]
+    
+    print(f"[CONFIG] Configuring LiveConnect for 진아 persona")
+    print(f"[CONFIG] Voice: {voice_name}")
+    print(f"[CONFIG] Tools enabled: {len(get_function_declarations())} functions")
+    
+    config = {
+        "response_modalities": response_modalities,
+        "system_instruction": system_instruction,
+        "tools": tools_config,
+        "output_audio_transcription": {},
+        "input_audio_transcription": {},
+        "generation_config": {
+            "candidate_count": 1,
+            "max_output_tokens": 8192,
+            "temperature": 0.7,  # 진아의 활기찬 성격을 위한 적절한 온도
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "speech_config": {
+            "voice_config": {
+                "prebuilt_voice_config": {
+                    "voice_name": voice_name
+                }
+            }
+        }
+    }
+    
+    return config
 
 CONNECTED_CLIENTS = set()
 class ResponseType:
@@ -161,35 +174,65 @@ class SessionManager:
             self.input_audio_chunks.append(message)
     
     def add_transcription(self, speaker, content):
-        # TODO: 논란의 여지가 있는 코드
-        if speaker == ResponseType.INPUT_TRANSCRIPT: speaker="user"
-        elif speaker == ResponseType.OUTPUT_TRANSCRIPT: speaker="ai"
+        if speaker == ResponseType.INPUT_TRANSCRIPT: 
+            speaker = "user"
+        elif speaker == ResponseType.OUTPUT_TRANSCRIPT: 
+            speaker = "ai"
 
-        self.conversation.append(
-            f"""{{"speaker":{speaker}, "content":{content}}}"""
-        )
+        self.conversation.append({
+            "speaker": speaker, 
+            "content": content,
+            "timestamp": datetime.datetime.now().isoformat()
+        })
 
     async def save_session(self):
-        #TODO: db에 세션 정보를 저장해야함
-        pass
+        # Enhanced session saving with conversation history
+        session_data = {
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "start_time": self.start_time.isoformat(),
+            "end_time": datetime.datetime.now().isoformat(),
+            "conversation": self.conversation
+        }
+        # TODO: Save to database or file
+        print(f"Session saved: {self.session_id}")
+
+    async def save_conversation_turn(self, role: str, content: str):
+        """대화 턴을 저장합니다 (alzheimer-call 스타일)"""
+        conversation_turn = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        self.conversation.append(conversation_turn)
     
     async def handle_function_call(self, function_name: str, args: Dict[str, Any]) -> str:
         """함수 호출을 처리합니다."""
         try:
             if function_name == "search_memories":
                 query = args.get("query", "")
+                print(f"[DEBUG] search_memories called with query: '{query}'")
+                
                 if not query:
                     return "검색어가 제공되지 않았습니다."
                     
                 memories = memory_service.retrieve_memories(query, top_k=5, user_id=self.user_id)
+                print(f"[DEBUG] Retrieved {len(memories)} memories")
+                
+                if memories:
+                    for i, mem in enumerate(memories):
+                        print(f"[DEBUG] Memory {i}: score={mem.score}, content={mem.metadata.get('content', '')[:50]}")
                 
                 if not memories:
+                    print(f"[DEBUG] No memories found for query '{query}'")
                     return f"'{query}'와 관련된 기억을 찾을 수 없습니다."
                 
                 # 높은 스코어만 필터링 (관련성 있는 결과만)
                 relevant_memories = [m for m in memories if m.score > 0.6]
+                print(f"[DEBUG] Filtered to {len(relevant_memories)} relevant memories (score > 0.6)")
                 
                 if not relevant_memories:
+                    print(f"[DEBUG] No relevant memories found (all scores <= 0.6)")
                     return f"'{query}'와 관련된 기억을 찾을 수 없습니다."
                 
                 result = f"'{query}'와 관련된 기억들:\n"
@@ -236,159 +279,283 @@ class SessionManager:
             print(f"Function call error: {e}")
             return f"함수 실행 중 오류가 발생했습니다: {str(e)}"
     
-    async def receive_client_message(self):
-        try:
-            async for message in self.websocket:
-                await self.add_audio(message)
-        except websockets.exceptions.ConnectionClosed:
-            print("오디오 수신 중 연결이 종료되었습니다.")
-        finally:
-            await self.add_audio(None) # 스트림 종료 신호 전송
-            raise
-
-    async def forward_to_gemini(self):
-        while True:
-            data = await self.audio_queue.get()
-
-            # Always send the audio data to Gemini
-            await self.session.send_realtime_input(
-                media={
-                    "data": data,
-                    "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}",
-                }
-            )
-
-            self.audio_queue.task_done()
-    
-    async def process_gemini_response(self):
-        while True:
-            input_transcriptions = []
-            output_transcriptions = []
-
+    async def handle_tool_call(self, tool_call):
+        """Live API tool call 처리"""
+        print(f"[TOOL CALL] Processing {len(tool_call.function_calls)} function calls")
+        
+        function_responses = []
+        for fc in tool_call.function_calls:
+            function_name = fc.name
+            function_args = fc.args if hasattr(fc, 'args') else {}
+            
+            print(f"[FUNCTION CALL] {function_name}({function_args})")
+            
             try:
-                async for response in self.session.receive():
-                    server_content = response.server_content
-
-                    if response.session_resumption_update:
-                        update = response.session_resumption_update
-                        if update.resumable and update.new_handle:
-                            # The handle should be retained and linked to the session.
-                            print(f"new SESSION: {update.new_handle}")
+                if function_name == "search_memories":
+                    query = function_args.get("query", "")
+                    top_k = function_args.get("top_k", 3)
                     
-                    # Check if the connection will be soon terminated
-                    if response.go_away is not None:
-                        print(f"Connection will be terminated in: {response.go_away.time_left}")
-
-                    if response.server_content and response.server_content.interrupted is True:
-                        # The generation was interrupted by the user.
-                        print("Generation interrupted by user")
-                        await self.websocket.send(to_payload(ResponseType.INTERRUPT, ""))
-                        continue
-
-                    # Handle tool calls
-                    if response.tool_call:
-                        print(f"Tool call received: {response.tool_call}")
-
-                        function_responses = []
-
-                        for function_call in response.tool_call.function_calls:
-                            name = function_call.name
-                            args = function_call.args
-                            call_id = function_call.id
-
-                            try:
-                                result = await self.handle_function_call(name, args)
-                                function_responses.append({
-                                    "name": name,
-                                    "response": {"result": result},
-                                    "id": call_id
-                                })
-                                print(f"Function {name} executed successfully")
-
-                            except Exception as e:
-                                error_msg = f"Error executing function {name}: {e}"
-                                print(error_msg)
-                                traceback.print_exc()
-                                function_responses.append({
-                                    "name": name,
-                                    "response": {"result": f"Error: {str(e)}"},
-                                    "id": call_id
-                                })
-
-                        # Send function responses back to Gemini
-                        if function_responses:
-                            print(f"Sending function responses: {function_responses}")
-                            for func_response in function_responses:
-                                await self.session.send_tool_response(
-                                    function_responses={
-                                        "name": func_response["name"],
-                                        "response": func_response["response"]["result"],
-                                        "id": func_response["id"],
-                                    }
-                                )
-                            # continue 제거 - 함수 응답 후에도 오디오 생성이 계속되도록 함
+                    print(f"[DEBUG] search_memories called with query: '{query}', top_k: {top_k}")
                     
-                    if server_content and server_content.model_turn:
-                        for part in server_content.model_turn.parts:
-                            if part.inline_data:
-                                encoded_audio = base64.b64encode(part.inline_data.data).decode('utf-8')
-                                await self.websocket.send(to_payload(ResponseType.AUDIO, encoded_audio))
-
-                    input_transcription = getattr(response.server_content, "input_transcription", None)
-                    if input_transcription and input_transcription.text:
-                        input_transcriptions.append(input_transcription.text)
-                        await self.websocket.send(to_payload(ResponseType.INPUT_TRANSCRIPT, input_transcription.text))
-
-                    output_transcription = getattr(response.server_content, "output_transcription", None)
-                    if output_transcription and output_transcription.text:
-                        output_transcriptions.append(output_transcription.text)
-                        await self.websocket.send(to_payload(ResponseType.OUTPUT_TRANSCRIPT, output_transcription.text))
-                    
-                    if server_content and server_content.turn_complete:
-                        await self.websocket.send(to_payload(ResponseType.TRUN_COMPLETE, server_content.turn_complete))
-                        print("Gemini response complete")
+                    if not query:
+                        result = "검색어가 제공되지 않았습니다."
+                    else:
+                        memories = memory_service.retrieve_memories(query, top_k, self.user_id)
+                        print(f"[DEBUG] Retrieved {len(memories)} memories")
+                        
+                        if memories:
+                            memory_text = []
+                            for memory in memories:
+                                content = memory.metadata.get('content', '')
+                                score = memory.score
+                                print(f"[DEBUG] Memory: score={score}, content={content[:50]}")
+                                
+                                if score > 0.001:
+                                    category = memory.metadata.get('category', '')
+                                    date = memory.metadata.get('date', '')
+                                    memory_info = f"- {content}"
+                                    if category:
+                                        memory_info += f" (분류: {category})"
+                                    if date:
+                                        memory_info += f" (날짜: {date})"
+                                    memory_text.append(memory_info)
+                            
+                            if memory_text:
+                                result = "검색된 기억:\n" + "\n".join(memory_text)
+                            else:
+                                result = "관련된 기억을 찾을 수 없습니다."
+                        else:
+                            result = "관련된 기억을 찾을 수 없습니다."
                 
-                print(f"Input transcription: {''.join(input_transcriptions)}")
-                self.add_transcription(ResponseType.INPUT_TRANSCRIPT, input_transcriptions)
-
-                print(f"Output transcription: {''.join(output_transcriptions)}")
-                self.add_transcription(ResponseType.OUTPUT_TRANSCRIPT, output_transcriptions)
+                elif function_name == "save_new_memory":
+                    content = function_args.get("content", "")
+                    category = function_args.get("category", "일반")
+                    importance = function_args.get("importance", "medium")
+                    
+                    if not content:
+                        result = "저장할 내용이 제공되지 않았습니다."
+                    else:
+                        metadata = {
+                            "category": category,
+                            "importance": importance,
+                            "date": datetime.datetime.now().strftime("%Y-%m-%d"),
+                            "session_id": self.session_id
+                        }
+                        
+                        memory_id = memory_service.add_memory(self.user_id, content, metadata)
+                        
+                        if memory_id:
+                            result = f"기억이 저장되었습니다: {content}"
+                        else:
+                            result = "기억 저장 중 오류가 발생했습니다."
+                
+                else:
+                    result = f"알 수 없는 함수: {function_name}"
+                
+                print(f"[FUNCTION RESULT] {result}")
+                
+                # FunctionResponse 생성
+                function_response = FunctionResponse(
+                    id=fc.id,
+                    name=fc.name,
+                    response={"result": result}
+                )
+                function_responses.append(function_response)
                 
             except Exception as e:
-                print(f"Error in process_gemini_response: {e}")
+                print(f"[FUNCTION ERROR] {function_name}: {e}")
                 traceback.print_exc()
-                # 연결이 끊어진 경우 루프 종료
-                if "connection" in str(e).lower() or "closed" in str(e).lower():
+                error_response = FunctionResponse(
+                    id=fc.id,
+                    name=fc.name,
+                    response={"error": str(e)}
+                )
+                function_responses.append(error_response)
+        
+        # Send all function responses
+        if function_responses:
+            await self.session.send_tool_response(function_responses=function_responses)
+    
+    async def receive_client_message(self):
+        """클라이언트로부터 오디오 메시지 수신 (alzheimer-call 스타일 개선)"""
+        try:
+            async for message in self.websocket:
+                if isinstance(message, bytes):
+                    await self.add_audio(message)
+                else:
+                    print(f"[WARNING] Unexpected message type: {type(message)}")
+        except websockets.exceptions.ConnectionClosed:
+            print("[AUDIO] 오디오 수신 중 연결이 종료되었습니다.")
+        except Exception as e:
+            print(f"[ERROR] Audio receiving failed: {e}")
+        finally:
+            await self.add_audio(None)  # 스트림 종료 신호 전송
+            print("[AUDIO] Audio stream terminated")
+
+    async def forward_to_gemini(self):
+        """클라이언트로부터 PCM 데이터를 받아 Gemini로 전송 (alzheimer-call 스타일 개선)"""
+        try:
+            while True:
+                data = await self.audio_queue.get()
+                
+                if data is None:  # 종료 신호
                     break
-                # 다른 오류의 경우 계속 시도
-                await asyncio.sleep(1)
+                    
+                try:
+                    # alzheimer-call 스타일의 Blob 사용
+                    blob = types.Blob(
+                        data=data,
+                        mime_type=f"audio/pcm;rate={SEND_SAMPLE_RATE}"
+                    )
+                    await self.session.send_realtime_input(audio=blob)
+                except Exception as e:
+                    print(f"[ERROR] Audio forwarding failed: {e}")
+                    continue
+
+                self.audio_queue.task_done()
+        except Exception as e:
+            print(f"[ERROR] Forward to Gemini terminated: {e}")
+            raise
+    
+    async def process_gemini_response(self):
+        """Gemini 응답을 클라이언트로 전송하고 function call 처리 (alzheimer-call 스타일 개선)"""
+        try:
+            while True:
+                input_transcriptions = []
+                output_transcriptions = []
+
+                try:
+                    async for response in self.session.receive():
+                        print(f"[DEBUG] Response received: {type(response)}")
+                        
+                        # Tool call 처리 (Live API 방식)
+                        if hasattr(response, 'tool_call') and response.tool_call:
+                            print(f"[DEBUG] Tool call detected: {response.tool_call}")
+                            await self.handle_tool_call(response.tool_call)
+                            continue
+
+                        # Session management
+                        if response.session_resumption_update:
+                            update = response.session_resumption_update
+                            if update.resumable and update.new_handle:
+                                print(f"[SESSION] New handle: {update.new_handle}")
+                        
+                        if response.go_away is not None:
+                            print(f"[SESSION] Connection will terminate in: {response.go_away.time_left}")
+
+                        # Handle interruptions
+                        if response.server_content and response.server_content.interrupted is True:
+                            print("[INTERRUPT] Generation interrupted by user")
+                            await self.websocket.send(to_payload(ResponseType.INTERRUPT, ""))
+                            continue
+
+                        # Process server content
+                        if response.server_content:
+                            server_content = response.server_content
+                            
+                            # Audio response processing
+                            if server_content.model_turn:
+                                for part in server_content.model_turn.parts:
+                                    if part.inline_data:
+                                        encoded_audio = base64.b64encode(part.inline_data.data).decode('utf-8')
+                                        await self.websocket.send(to_payload(ResponseType.AUDIO, encoded_audio))
+                                    
+                                    # Handle text parts for conversation saving
+                                    if hasattr(part, 'text') and part.text:
+                                        await self.save_conversation_turn("assistant", part.text)
+
+                            # Input transcription processing
+                            if hasattr(server_content, 'input_transcription') and server_content.input_transcription:
+                                transcription = server_content.input_transcription
+                                if hasattr(transcription, 'text') and transcription.text:
+                                    input_transcriptions.append(transcription.text)
+                                    await self.websocket.send(to_payload(ResponseType.INPUT_TRANSCRIPT, transcription.text))
+                                    await self.save_conversation_turn("user", transcription.text)
+
+                            # Output transcription processing
+                            if hasattr(server_content, 'output_transcription') and server_content.output_transcription:
+                                transcription = server_content.output_transcription
+                                if hasattr(transcription, 'text') and transcription.text:
+                                    output_transcriptions.append(transcription.text)
+                                    await self.websocket.send(to_payload(ResponseType.OUTPUT_TRANSCRIPT, transcription.text))
+                                    await self.save_conversation_turn("assistant", transcription.text)
+                            
+                            # Turn completion
+                            if server_content.turn_complete:
+                                await self.websocket.send(to_payload(ResponseType.TRUN_COMPLETE, server_content.turn_complete))
+                                print("[TURN] Gemini response complete")
+
+                    # Log transcriptions
+                    if input_transcriptions:
+                        full_input = ''.join(input_transcriptions)
+                        print(f"[INPUT] {full_input}")
+                        self.add_transcription(ResponseType.INPUT_TRANSCRIPT, input_transcriptions)
+
+                    if output_transcriptions:
+                        full_output = ''.join(output_transcriptions)
+                        print(f"[OUTPUT] {full_output}")
+                        self.add_transcription(ResponseType.OUTPUT_TRANSCRIPT, output_transcriptions)
+                    
+                except Exception as e:
+                    print(f"[ERROR] Response processing failed: {e}")
+                    if "connection" in str(e).lower() or "closed" in str(e).lower():
+                        break
+                    await asyncio.sleep(0.1)
+                    continue
+
+                await asyncio.sleep(0.1)
+                
+        except Exception as e:
+            print(f"[ERROR] Process Gemini response terminated: {e}")
+            raise
 
 async def handler(websocket):
-    print(f"클라이언트 연결됨: {websocket.remote_address}")
+    """웹소켓 연결 핸들러 (alzheimer-call 스타일 개선)"""
+    print(f"[CONNECTION] 클라이언트 연결됨: {websocket.remote_address}")
     CONNECTED_CLIENTS.add(websocket)
     sessionManager = None
     
     try:
-        async with (
-            client.aio.live.connect(model=MODEL, config=get_live_api_config()) as session,
-            asyncio.TaskGroup() as tg,
-        ):
+        config = get_live_api_config()
+        print(f"[CONFIG] Model: {MODEL}")
+        print(f"[CONFIG] Live API configuration created")
+        
+        async with client.aio.live.connect(model=MODEL, config=config) as session:
+            print(f"[SESSION] Live session established")
             sessionManager = SessionManager(websocket, session)
-            tg.create_task(sessionManager.receive_client_message())
-            tg.create_task(sessionManager.forward_to_gemini())
-            tg.create_task(sessionManager.process_gemini_response())
+            
+            # Task management (alzheimer-call style)
+            tasks = [
+                asyncio.create_task(sessionManager.receive_client_message()),
+                asyncio.create_task(sessionManager.forward_to_gemini()),
+                asyncio.create_task(sessionManager.process_gemini_response())
+            ]
+
+            try:
+                await asyncio.gather(*tasks)
+            except (websockets.exceptions.ConnectionClosed, Exception) as e:
+                print(f"[SESSION INTERRUPTED] {e}")
+            finally:
+                # Clean up tasks
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                print(f"[SESSION] Session cleanup complete")
 
     except websockets.exceptions.ConnectionClosed as e:
-        print(f"클라이언트 연결 끊김: {websocket.remote_address} (코드: {e.code}, 이유: {e.reason})")
+        print(f"[DISCONNECT] 클라이언트 연결 끊김: {websocket.remote_address} (코드: {e.code}, 이유: {e.reason})")
         if sessionManager:
             await sessionManager.save_session()
-    except Exception:
-        print(f"unhandled error 발생")
+    except Exception as e:
+        print(f"[ERROR] Handler error: {e}")
+        traceback.print_exc()
         raise
     finally:
-        # 클라이언트 집합에서 제거
-        CONNECTED_CLIENTS.remove(websocket)
-        print(f"남은 클라이언트 수: {len(CONNECTED_CLIENTS)}")
+        # Remove from connected clients
+        if websocket in CONNECTED_CLIENTS:
+            CONNECTED_CLIENTS.remove(websocket)
+        print(f"[CLIENTS] 남은 클라이언트 수: {len(CONNECTED_CLIENTS)}")
 
 async def main():
     # 메모리 서비스 초기화
