@@ -175,7 +175,6 @@ class StreamingAudioPlayer {
         }
     }
 
-
     stop() {
         this.interrupt(); // stop 호출 시 interrupt와 동일한 로직 수행
         if (this.audioContext && this.audioContext.state !== 'closed') {
@@ -237,14 +236,38 @@ const disconnectBtn = document.getElementById('disconnectBtn');
 const statusDiv = document.getElementById('status');
 const transcriptsDiv = document.getElementById('transcripts');
 
-const SERVER_URL = "ws://localhost:8765";
+// 🔧 서버 엔드포인트 변경
+const SERVER_URL = "ws://localhost:8765/ws/realtime";
 const SEND_SAMPLE_RATE = 16000;
 const RECEIVE_SAMPLE_RATE = 24000;
 
 let geminiApi, microphone, audioPlayer;
 
+// 🆕 API 상태 확인 함수 추가
+async function checkServerHealth() {
+    try {
+        const response = await fetch('http://localhost:8765/health');
+        const data = await response.json();
+        console.log('서버 상태:', data);
+        return data.status === 'healthy';
+    } catch (error) {
+        console.error('서버 상태 확인 실패:', error);
+        return false;
+    }
+}
+
 connectBtn.addEventListener('click', async () => {
     connectBtn.disabled = true;
+    statusDiv.textContent = '서버 상태 확인 중...';
+
+    // 🆕 서버 헬스 체크
+    const isServerHealthy = await checkServerHealth();
+    if (!isServerHealthy) {
+        updateStatus('❌ 서버가 응답하지 않습니다', '#f8d7da');
+        connectBtn.disabled = false;
+        return;
+    }
+
     statusDiv.textContent = '연결 중...';
     transcriptsDiv.innerHTML = '';
 
@@ -275,24 +298,40 @@ function setupApiCallbacks() {
         updateStatus('✅ 연결됨 및 녹음 중...', '#d4edda');
         disconnectBtn.disabled = false;
     };
-    geminiApi.onClose = () => {
-        updateStatus('🔌 연결 끊김', '#fff3cd');
+    
+    geminiApi.onClose = (event) => {
+        // 🔧 연결 종료 이유에 따른 메시지 개선
+        const reason = event.reason || '알 수 없는 이유';
+        const code = event.code || '알 수 없음';
+        console.log(`연결 종료: 코드 ${code}, 이유: ${reason}`);
+        
+        if (code === 1011) {
+            updateStatus('❌ 서버 내부 오류로 연결이 끊어졌습니다', '#f8d7da');
+        } else {
+            updateStatus(`🔌 연결 끊김 (${reason})`, '#fff3cd');
+        }
         stopAll();
     };
+    
     geminiApi.onError = (error) => {
+        console.error('WebSocket 오류:', error);
         updateStatus('❌ 웹소켓 오류 발생', '#f8d7da');
         stopAll();
     };
+    
     geminiApi.onAudio = (base64) => audioPlayer.receiveAudio(base64);
     geminiApi.onInputTranscript = (text) => appendTranscript(text, '사용자', 'user-transcript');
     geminiApi.onOutputTranscript = (text) => appendTranscript(text, 'AI', 'ai-transcript');
+    
     geminiApi.onTurnComplete = () => {
         console.log("대화 턴 완료.");
         const lastElement = transcriptsDiv.lastElementChild;
         if(lastElement) lastElement.dataset.final = "true";
     };
+    
     // Interrupt 콜백 설정
     geminiApi.onInterrupt = () => {
+        console.log("오디오 중단 처리");
         audioPlayer.interrupt();
     };
 }
@@ -323,3 +362,13 @@ function appendTranscript(text, speaker, className) {
     }
     transcriptsDiv.scrollTop = transcriptsDiv.scrollHeight;
 }
+
+// 🆕 페이지 로드 시 서버 상태 확인
+document.addEventListener('DOMContentLoaded', async () => {
+    const isHealthy = await checkServerHealth();
+    if (isHealthy) {
+        updateStatus('🟢 서버 준비됨 - 연결 가능', '#d1ecf1');
+    } else {
+        updateStatus('🔴 서버 연결 불가', '#f8d7da');
+    }
+});
