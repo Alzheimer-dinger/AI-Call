@@ -3,7 +3,6 @@ import time
 import uuid
 from typing import List, Dict, Any
 from dataclasses import dataclass
-from google import genai
 import os
 from pinecone import Pinecone, ServerlessSpec
 
@@ -17,21 +16,13 @@ class MemoryService:
         # Pinecone 설정
         self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
         self.index_name = os.getenv("PINECONE_INDEX_NAME", "alzheimer-memories")
-        self.dimension = int(os.getenv("PINECONE_DIMENSION", "768"))
+        self.dimension = int(os.getenv("PINECONE_DIMENSION", "1024"))  # multilingual-e5-large dimension
         self.metric = os.getenv("PINECONE_METRIC", "cosine")
         self.cloud = os.getenv("PINECONE_CLOUD", "aws")
         self.region = os.getenv("PINECONE_REGION", "us-east-1")
         
-        # 임베딩 모델 설정
-        self.embedding_model = os.getenv("EMBEDDING_MODEL", "models/text-embedding-001")
-        
-        # Google Genai 클라이언트 설정
-        gemini_api_key = os.getenv("GEMINI_API_KEY")
-        if gemini_api_key:
-            self.genai_client = genai.Client(vertexai=False, api_key=gemini_api_key)
-        else:
-            print("Warning: GEMINI_API_KEY not found. Embedding functions will be disabled.")
-            self.genai_client = None
+        # Pinecone 임베딩 모델 설정 (multilingual-e5-large 사용)
+        self.embedding_model = os.getenv("EMBEDDING_MODEL", "multilingual-e5-large")
         
         # Pinecone 클라이언트 초기화
         if self.pinecone_api_key:
@@ -41,18 +32,39 @@ class MemoryService:
             self.pinecone = None
 
     def get_embedding(self, text: str) -> List[float]:
-        """주어진 텍스트를 Gemini API를 사용하여 임베딩합니다."""
-        if not self.genai_client:
-            print("Genai client not initialized")
+        """주어진 텍스트를 Pinecone inference API를 사용하여 임베딩합니다."""
+        if not self.pinecone:
+            print("Pinecone client not initialized")
             return []
             
         try:
-            result = self.genai_client.models.embed_content(model=self.embedding_model, contents=text)
-            if result.embeddings and len(result.embeddings) > 0:
-                return result.embeddings[0].values
-            else:
-                print("[DEBUG] No embeddings found in result")
-                return []
+            # Pinecone inference API 사용
+            result = self.pinecone.inference.embed(
+                model=self.embedding_model,
+                inputs=[text],
+                parameters={"input_type": "query", "truncate": "END"}
+            )
+            
+            # EmbeddingsList 객체 처리
+            if hasattr(result, '__iter__') and len(result) > 0:
+                first_embedding = result[0]
+                
+                # DenseEmbedding 객체에서 값 추출
+                if hasattr(first_embedding, 'to_dict'):
+                    embedding_dict = first_embedding.to_dict()
+                    if 'values' in embedding_dict:
+                        return embedding_dict['values']
+                    elif 'embedding' in embedding_dict:
+                        return embedding_dict['embedding']
+                
+                # 직접 속성 접근 시도
+                if hasattr(first_embedding, 'values'):
+                    return first_embedding.values
+                elif hasattr(first_embedding, 'embedding'):
+                    return first_embedding.embedding
+            
+            print(f"[DEBUG] No embeddings found in result")
+            return []
         except Exception as e:
             print(f"Error generating embedding: {e}")
             return []
