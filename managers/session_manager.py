@@ -210,6 +210,11 @@ class SessionManager:
                     if response.go_away is not None:
                         print(f"연결 종료 예정: {response.go_away.time_left}")
 
+                    # 도구 호출 처리 (server_content보다 먼저 처리)
+                    if response.tool_call:
+                        await self._handle_tool_calls(response.tool_call)
+                        continue
+
                     server_content = response.server_content
                     if not server_content:
                         continue
@@ -220,11 +225,6 @@ class SessionManager:
                         await self.websocket.send_text(
                             PayloadManager.to_payload(ResponseType.INTERRUPT, "")
                         )
-                        continue
-
-                    # 도구 호출 처리
-                    if response.tool_call:
-                        await self._handle_tool_calls(response.tool_call)
                         continue
                     
                     # 오디오 응답 처리
