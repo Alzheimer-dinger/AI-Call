@@ -285,14 +285,11 @@ class SessionManager:
                             for memory in memories:
                                 content = memory.metadata.get('content', '')
                                 score = memory.score
-                                print(f"[DEBUG] Memory: score={score}, content={content[:50]}")
+                                print(f"[DEBUG] Memory: score={score}, content={content[:50] if content else 'No content'}")
                                 
                                 if score > 0.001:
-                                    category = memory.metadata.get('category', '')
                                     date = memory.metadata.get('date', '')
                                     memory_info = f"- {content}"
-                                    if category:
-                                        memory_info += f" (분류: {category})"
                                     if date:
                                         memory_info += f" (날짜: {date})"
                                     memory_text.append(memory_info)
@@ -306,17 +303,13 @@ class SessionManager:
                 
                 elif function_name == "save_new_memory":
                     content = function_args.get("content", "")
-                    category = function_args.get("category", "일반")
-                    importance = function_args.get("importance", "medium")
                     
                     if not content:
                         result = "저장할 내용이 제공되지 않았습니다."
                     else:
                         metadata = {
-                            "category": category,
-                            "importance": importance,
-                            "date": datetime.datetime.now().strftime("%Y-%m-%d"),
-                            "session_id": self.session_id
+                            "user_id": self.user_id,
+                            "date": datetime.datetime.now().strftime("%Y-%m-%d")
                         }
                         
                         memory_id = memory_service.add_memory(self.user_id, content, metadata)

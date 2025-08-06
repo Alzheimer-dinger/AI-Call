@@ -52,12 +52,12 @@ SYSTEM_INSTRUCTION = """
 - "취미", "운동", "여행", "추억", "옛날"
 - "어떻게", "왜", "뭔지", "기억나", "생각나"
 
-💾 **ALWAYS SAVE IMPORTANT INFO** - 다음 정보를 들으면 반드시 save_new_memory() 호출:
-- 애완동물 이름, 가족 이름, 친구 이름
-- 좋아하는 음식, 싫어하는 음식  
-- 건강 정보, 복용 약물, 병원 정보
-- 취미, 관심사, 일상 루틴
-- 중요한 날짜, 추억, 경험담
+💾 **ALWAYS SAVE IMPORTANT INFO** - 새로운 정보를 들으면 반드시 완결된 한 문장으로 save_new_memory() 호출:
+- "할아버지는 경기도 용인시에 살고 계신다"
+- "강아지 이름은 바둑이이고 매일 저녁 6시에 밥을 준다"
+- "매주 수요일 오전에 공원에서 산책하는 것을 좋아하신다"
+- "혈압약을 매일 아침 8시에 복용하신다"
+- 완전한 문장으로 저장해야 나중에 검색할 때 맥락을 이해할 수 있음
 
 ⚡ **검색 우선 원칙**: 
 - 어떤 질문이든 관련 기억이 있을 수 있으면 먼저 search_memories() 호출
@@ -99,26 +99,16 @@ TOOLS = [
             ),
             FunctionDeclaration(
                 name="save_new_memory",
-                description="할아버지/할머니가 말씀하신 새로운 중요한 정보를 저장합니다. 애완동물 이름, 가족 정보, 음식 선호도, 건강 정보, 취미 등 개인적인 정보를 들으면 반드시 저장해야 합니다.",
+                description="할아버지/할머니의 새로운 정보를 완결된 한 문장으로 저장합니다. 예: '할아버지는 경기도 용인시에 살고 계신다', '강아지 이름은 바둑이다' 등 검색하기 쉬운 완전한 문장으로 저장하세요.",
                 parameters={
                     "type": "object",
                     "properties": {
                         "content": {
                             "type": "string",
-                            "description": "저장할 기억 내용"
-                        },
-                        "category": {
-                            "type": "string",
-                            "description": "기억의 카테고리 (예: 가족, 취미, 건강, 일상 등)"
-                        },
-                        "importance": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                            "description": "기억의 중요도",
-                            "default": "medium"
+                            "description": "완결된 한 문장 형태의 기억 내용 (예: '할아버지는 매주 수요일에 공원 산책을 좋아하신다')"
                         }
                     },
-                    "required": ["content", "category"]
+                    "required": ["content"]
                 }
             )
         ]
