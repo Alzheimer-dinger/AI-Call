@@ -24,6 +24,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SEND_SAMPLE_RATE = 16000
 PORT = 8765
 
+# --- JWT 설정 (Spring 서버와 동일한 설정 사용) ---
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-this")  # Spring의 jwt.key와 동일해야 함
+
 # --- 메모리 설정 ---
 MEMORY_RELEVANCE_THRESHOLD = 0.6
 MAX_MEMORY_RESULTS = 5

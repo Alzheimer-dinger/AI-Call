@@ -18,14 +18,14 @@ from database import transcripts_collection
 class SessionManager:
     """개별 세션을 관리하는 클래스"""
     
-    def __init__(self, websocket: WebSocket, session):
+    def __init__(self, websocket: WebSocket, session, user_id: str = "guest_user"):
         self.websocket = websocket
         self.session = session
         self.audio_queue = asyncio.Queue()
         
         # 세션 정보
         self.session_id: str = str(datetime.datetime.now().timestamp())
-        self.user_id: str = "guest_user"  # 기본 사용자 ID
+        self.user_id: str = user_id  # JWT에서 추출된 사용자 ID
         self.start_time: datetime.datetime = datetime.datetime.now()
         self.end_time: datetime.datetime = None
         self.conversation: List[ConversationTurn] = []  # 타입 수정

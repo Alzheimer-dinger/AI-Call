@@ -1,7 +1,8 @@
 // --- IMPORTANT : 1. Gemini API 통신 클래스 (⭐) ---
 class GeminiAPI {
-    constructor(endpoint) {
+    constructor(endpoint, token = null) {
         this.endpoint = endpoint;
+        this.token = token;
         this.ws = null;
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
@@ -21,7 +22,9 @@ class GeminiAPI {
 
     connect() {
         this.isManualDisconnect = false;
-        this.ws = new WebSocket(this.endpoint);
+        // JWT 토큰을 URL 쿼리 매개변수로 추가
+        const wsUrl = this.token ? `${this.endpoint}?token=${this.token}` : this.endpoint;
+        this.ws = new WebSocket(wsUrl);
         this._setupWebSocketHandlers();
     }
 
@@ -289,7 +292,14 @@ const SERVER_URL = "ws://localhost:8765/ws/realtime";
 const SEND_SAMPLE_RATE = 16000;
 const RECEIVE_SAMPLE_RATE = 24000;
 
-let geminiApi, microphone, audioPlayer;
+let geminiApi, microphone, audioPlayer, accessToken = null;
+
+// 🆕 Spring 서버에서 JWT 토큰 획득 함수
+function getAccessTokenFromUser() {
+    // Spring 서버에서 발급받은 JWT 토큰을 입력받음
+    const token = prompt('Spring 서버에서 발급받은 JWT 토큰을 입력하세요:');
+    return token && token.trim() !== '' ? token.trim() : null;
+}
 
 // 🆕 API 상태 확인 함수 추가
 async function checkServerHealth() {
@@ -316,11 +326,21 @@ connectBtn.addEventListener('click', async () => {
         return;
     }
 
+    statusDiv.textContent = 'JWT 토큰 입력 대기 중...';
+    
+    // 🆕 Spring 서버에서 발급받은 JWT 토큰 입력
+    accessToken = getAccessTokenFromUser();
+    if (!accessToken) {
+        updateStatus('❌ JWT 토큰이 필요합니다', '#f8d7da');
+        connectBtn.disabled = false;
+        return;
+    }
+
     statusDiv.textContent = '연결 중...';
     transcriptsDiv.innerHTML = '';
 
     audioPlayer = new StreamingAudioPlayer(RECEIVE_SAMPLE_RATE);
-    geminiApi = new GeminiAPI(SERVER_URL);
+    geminiApi = new GeminiAPI(SERVER_URL, accessToken); // 토큰과 함께 API 생성
     setupApiCallbacks();
 
     microphone = new Microphone(SEND_SAMPLE_RATE, (audioBuffer) => {
@@ -353,7 +373,9 @@ function setupApiCallbacks() {
         const code = event.code || '알 수 없음';
         console.log(`연결 종료: 코드 ${code}, 이유: ${reason}`);
         
-        if (code === 1011) {
+        if (code === 1008) {
+            updateStatus('❌ 인증 실패로 연결이 끊어졌습니다', '#f8d7da');
+        } else if (code === 1011) {
             updateStatus('❌ 서버 내부 오류로 연결이 끊어졌습니다', '#f8d7da');
         } else {
             updateStatus(`🔌 연결 끊김 (${reason})`, '#fff3cd');

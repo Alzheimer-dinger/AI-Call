@@ -14,6 +14,7 @@ from settings import (
 )
 from managers.websocket_manager import ConnectionManager
 from managers.session_manager import SessionManager
+from auth.websocket_auth import websocket_auth
 
 # --- 클라이언트 초기화 ---
 client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
@@ -25,8 +26,11 @@ connection_manager = ConnectionManager()
 
 async def handle_realtime_session(websocket: WebSocket):
     """실시간 세션 처리 핸들러"""
+    # JWT 인증 먼저 수행
+    user_id = await websocket_auth.authenticate_websocket(websocket)
+    
     await connection_manager.connect(websocket)
-    print(f"클라이언트 연결됨: {websocket.client}")
+    print(f"인증된 클라이언트 연결됨: {websocket.client}, 사용자 ID: {user_id}")
     session_manager = None
     
     try:
@@ -34,7 +38,7 @@ async def handle_realtime_session(websocket: WebSocket):
             client.aio.live.connect(model=MODEL, config=get_live_api_config()) as session,
             asyncio.TaskGroup() as task_group,
         ):
-            session_manager = SessionManager(websocket, session)
+            session_manager = SessionManager(websocket, session, user_id)
             
             # 병렬 태스크 생성
             task_group.create_task(session_manager.receive_client_message())
