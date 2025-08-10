@@ -4,3 +4,6 @@ google-generativeai
 python-dotenv
 PyJWT
 cryptography
+google-cloud-storage
+wave
+pymongo

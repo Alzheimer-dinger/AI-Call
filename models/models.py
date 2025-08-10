@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -27,3 +27,4 @@ class ConversationLog(BaseModel):
     start_time: datetime = Field(..., description="대화 시작 시간 (ISO 8601 형식)")
     end_time: datetime = Field(..., description="대화 종료 시간 (ISO 8601 형식)")
     conversation: List[ConversationTurn] = Field(..., description="전체 대화 내용 리스트")
+    audio_recording_url: Optional[str] = Field(None, description="음성 녹음 파일 URL (GCS)")

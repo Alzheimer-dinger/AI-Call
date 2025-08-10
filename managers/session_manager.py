@@ -9,6 +9,7 @@ from models.models import ConversationLog, ConversationTurn, SpeakerEnum
 from settings import ResponseType, SEND_SAMPLE_RATE, MEMORY_RELEVANCE_THRESHOLD, MAX_MEMORY_RESULTS
 from managers.websocket_manager import PayloadManager
 from services.memory_service import memory_service
+from services.audio_service import audio_service
 
 from google.genai.types import FunctionResponse
 
@@ -29,12 +30,21 @@ class SessionManager:
         self.start_time: datetime.datetime = datetime.datetime.now()
         self.end_time: datetime.datetime = None
         self.conversation: List[ConversationTurn] = []  # 타입 수정
+        
+        # 스트리밍 녹음기 생성
+        self.audio_recorder = audio_service.create_streaming_recorder(user_id, self.session_id)
+        
+        # 레거시 지원용 (기존 코드와 호환성)
         self.input_audio_chunks: List = []
 
     async def add_audio(self, message):
         """오디오 메시지를 큐에 추가"""
         await self.audio_queue.put(message)
         if message is not None:
+            # 스트리밍 녹음기에 실시간 전송
+            await self.audio_recorder.append_audio_chunk(message)
+            
+            # 레거시 지원 (기존 코드와 호환성)
             self.input_audio_chunks.append(message)
     
     def add_transcription(self, speaker: str, content: List[str]):
@@ -52,22 +62,43 @@ class SessionManager:
     async def save_session(self):
         """세션 정보를 DB에 저장"""
         try:
+            # 스트리밍 녹음 완료 및 WAV 파일 생성
+            audio_url = None
+            if self.audio_recorder:
+                audio_url = await self.audio_recorder.finalize_recording()
+                if audio_url:
+                    print(f"스트리밍 음성 파일 업로드 완료: {audio_url}")
+                else:
+                    print("음성 파일 업로드 실패")
+                    
+                # 리소스 정리
+                self.audio_recorder.cleanup()
+                self.audio_recorder = None
+            
             log = ConversationLog(
                 user_id=self.user_id,
                 start_time=self.start_time,
                 end_time=self.end_time,
-                conversation=self.conversation
+                conversation=self.conversation,
+                audio_recording_url=audio_url  # 음성 파일 URL 추가
             )
 
             result = await transcripts_collection.insert_one(log)
                 
             print(f"세션 저장 성공: {self.session_id}, DB ID: {result.inserted_id}")
+            if audio_url:
+                print(f"음성 파일: {audio_url}")
             
         except PyMongoError as e:
             print(f"MongoDB 저장 중 오류 발생: {e}")
             
         except Exception as e:
             print(f"세션 저장 중 예기치 않은 오류 발생: {e}")
+            
+            # 오류 발생시 리소스 정리
+            if hasattr(self, 'audio_recorder') and self.audio_recorder:
+                self.audio_recorder.cleanup()
+                self.audio_recorder = None
 
     async def handle_function_call(self, function_name: str, args: Dict[str, Any]) -> str:
         """함수 호출을 처리"""
