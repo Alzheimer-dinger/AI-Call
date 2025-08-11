@@ -75,11 +75,11 @@ class StreamingAudioRecorder:
                 print("녹음된 오디오가 없습니다.")
                 return None
             
-            # PCM 데이터 읽기
-            pcm_data = self.pcm_blob.download_as_bytes()
-            data_size = len(pcm_data)
+            # PCM 파일 크기 확인
+            pcm_blob_info = self.pcm_blob.reload()
+            data_size = pcm_blob_info.size if pcm_blob_info.size else 0
             
-            # WAV 헤더 생성
+            # WAV 헤더 생성 및 별도 블롭에 업로드
             wav_header = self._create_wav_header(
                 sample_rate=SEND_SAMPLE_RATE,
                 num_channels=1,
@@ -87,15 +87,16 @@ class StreamingAudioRecorder:
                 data_size=data_size
             )
             
-            # WAV 파일 생성 (헤더 + PCM 데이터)
+            header_blob_name = f"{self.pcm_blob_name}.header"
+            header_blob = self.bucket.blob(header_blob_name)
+            header_blob.upload_from_string(wav_header)
+            
+            # GCS Compose를 사용하여 헤더 + PCM 데이터 결합
             wav_blob = self.bucket.blob(self.wav_blob_name)
+            wav_blob.compose([header_blob, self.pcm_blob])
             
-            # WAV 파일을 스트리밍으로 업로드
-            with wav_blob.open("wb") as wav_stream:
-                wav_stream.write(wav_header)
-                wav_stream.write(pcm_data)
-            
-            # PCM 파일 삭제 (선택사항)
+            # 임시 파일들 삭제
+            header_blob.delete()
             self.pcm_blob.delete()
             
             wav_url = f"gs://{self.bucket_name}/{self.wav_blob_name}"
