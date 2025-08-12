@@ -42,10 +42,14 @@ class SessionManager:
         await self.audio_queue.put(message)
         if message is not None:
             # 스트리밍 녹음기에 실시간 전송
-            await self.audio_recorder.append_audio_chunk(message)
+            success = await self.audio_recorder.append_audio_chunk(message)
+            if not success:
+                print(f"오디오 청크 추가 실패: {len(message)} bytes")
             
             # 레거시 지원 (기존 코드와 호환성)
             self.input_audio_chunks.append(message)
+        else:
+            print("오디오 스트림 종료 신호 수신")
     
     def add_transcription(self, speaker: str, content: List[str]):
         """대화 내용을 기록에 추가"""
@@ -61,19 +65,26 @@ class SessionManager:
 
     async def save_session(self):
         """세션 정보를 DB에 저장"""
+        print(f"save_session 시작 - 세션 ID: {self.session_id}")
         try:
+            # 세션 종료 시간 기록
+            self.end_time = datetime.datetime.now()
+            
             # 스트리밍 녹음 완료 및 WAV 파일 생성
             audio_url = None
             if self.audio_recorder:
-                audio_url = await self.audio_recorder.finalize_recording()
-                if audio_url:
-                    print(f"스트리밍 음성 파일 업로드 완료: {audio_url}")
-                else:
-                    print("음성 파일 업로드 실패")
-                    
-                # 리소스 정리
-                self.audio_recorder.cleanup()
-                self.audio_recorder = None
+                try:
+                    audio_url = await self.audio_recorder.finalize_recording()
+                    if audio_url:
+                        print(f"스트리밍 음성 파일 업로드 완료: {audio_url}")
+                    else:
+                        print("음성 파일 업로드 실패 - 녹음된 데이터가 없거나 업로드 중 오류 발생")
+                except Exception as e:
+                    print(f"녹음 완료 처리 중 오류: {e}")
+                finally:
+                    # 리소스 정리
+                    self.audio_recorder.cleanup()
+                    self.audio_recorder = None
             
             log = ConversationLog(
                 user_id=self.user_id,
@@ -83,7 +94,11 @@ class SessionManager:
                 audio_recording_url=audio_url  # 음성 파일 URL 추가
             )
 
-            result = await transcripts_collection.insert_one(log)
+            # Pydantic 모델을 딕셔너리로 변환하여 MongoDB에 저장 (UUID를 문자열로 변환)
+            log_dict = log.model_dump()
+            if 'session_id' in log_dict:
+                log_dict['session_id'] = str(log_dict['session_id'])
+            result = await transcripts_collection.insert_one(log_dict)
                 
             print(f"세션 저장 성공: {self.session_id}, DB ID: {result.inserted_id}")
             if audio_url:
@@ -191,15 +206,14 @@ class SessionManager:
                 await self.add_audio(message)
         except WebSocketDisconnect as e:
             print("오디오 수신 중 WebSocket 연결이 종료되었습니다.")
-            self.websocket.close()
+            raise  # WebSocketDisconnect를 상위로 전파
 
         except Exception as e:
             print(f"메시지 수신 중 오류: {e}")
-            self.websocket.close()
+            raise  # 다른 예외도 상위로 전파
 
         finally:
             await self.add_audio(None)  # 스트림 종료 신호
-            self.websocket.close()
 
     async def forward_to_gemini(self):
         """오디오 데이터를 Gemini로 전달"""

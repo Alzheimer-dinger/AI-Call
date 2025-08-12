@@ -68,16 +68,30 @@ class StreamingAudioRecorder:
         try:
             # PCM 스트림 닫기
             if self.pcm_stream:
-                self.pcm_stream.close()
-                self.pcm_stream = None
+                try:
+                    self.pcm_stream.close()
+                    print(f"PCM 스트림 닫기 완료. 총 프레임: {self.total_frames}")
+                except Exception as e:
+                    print(f"PCM 스트림 닫기 중 오류: {e}")
+                finally:
+                    self.pcm_stream = None
             
             if self.total_frames == 0:
-                print("녹음된 오디오가 없습니다.")
+                print("녹음된 오디오가 없습니다. (total_frames = 0)")
                 return None
             
             # PCM 파일 크기 확인
-            pcm_blob_info = self.pcm_blob.reload()
-            data_size = pcm_blob_info.size if pcm_blob_info.size else 0
+            try:
+                self.pcm_blob.reload()
+                data_size = self.pcm_blob.size if self.pcm_blob.size else 0
+                print(f"PCM 파일 크기: {data_size} bytes")
+            except Exception as e:
+                print(f"PCM 파일 정보 확인 중 오류: {e}")
+                return None
+            
+            if data_size == 0:
+                print("PCM 파일이 비어있습니다.")
+                return None
             
             # WAV 헤더 생성 및 별도 블롭에 업로드
             wav_header = self._create_wav_header(
