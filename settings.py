@@ -27,6 +27,10 @@ PORT = 8765
 # --- JWT 설정 (Spring 서버와 동일한 설정 사용) ---
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-this")  # Spring의 jwt.key와 동일해야 함
 
+# --- Google Cloud Storage 설정 ---
+GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "voice-recordings")
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")  # GCS 인증 키 파일 경로
+
 # --- 메모리 설정 ---
 MEMORY_RELEVANCE_THRESHOLD = 0.6
 MAX_MEMORY_RESULTS = 5

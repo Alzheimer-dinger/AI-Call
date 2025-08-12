@@ -34,30 +34,40 @@ async def handle_realtime_session(websocket: WebSocket):
     session_manager = None
     
     try:
-        async with (
-            client.aio.live.connect(model=MODEL, config=get_live_api_config()) as session,
-            asyncio.TaskGroup() as task_group,
-        ):
+        async with client.aio.live.connect(model=MODEL, config=get_live_api_config()) as session:
             session_manager = SessionManager(websocket, session, user_id)
             
-            # 병렬 태스크 생성
-            task_group.create_task(session_manager.receive_client_message())
-            task_group.create_task(session_manager.forward_to_gemini())
-            task_group.create_task(session_manager.process_gemini_response())
+            try:
+                async with asyncio.TaskGroup() as task_group:
+                    # 병렬 태스크 생성
+                    task_group.create_task(session_manager.receive_client_message())
+                    task_group.create_task(session_manager.forward_to_gemini())
+                    task_group.create_task(session_manager.process_gemini_response())
+            except* Exception as eg:
+                print(f"TaskGroup에서 예외 발생: {eg}")
+                # TaskGroup의 예외는 무시하고 계속 진행 (연결 종료 시 정상적인 상황)
 
     except WebSocketDisconnect as e:
         print(f"클라이언트 연결 끊김: {websocket.client} (코드: {e.code}, 이유: {e.reason})")
     except Exception as e:
         print(f"처리되지 않은 오류 발생: {e}")
-        raise
+        import traceback
+        traceback.print_exc()
     finally:
+        print("=== 세션 종료 처리 시작 ===")
         # 세션 정보 저장
         if session_manager:
+            print(f"세션 매니저 발견: {session_manager.session_id}")
+            print("save_session 호출 시작...")
             await session_manager.save_session()
+            print("save_session 호출 완료")
+        else:
+            print("세션 매니저가 None입니다")
         
         # 연결 관리자에서 제거
         connection_manager.disconnect(websocket)
         print(f"남은 클라이언트 수: {len(connection_manager.active_connections)}")
+        print("=== 세션 종료 처리 완료 ===")
 
 # --- FastAPI 애플리케이션 ---
 app = FastAPI(
