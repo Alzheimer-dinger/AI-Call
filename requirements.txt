@@ -1,8 +1,12 @@
 fastapi
 uvicorn
 google-generativeai
+google-genai
 python-dotenv
 PyJWT
 cryptography
 google-cloud-storage
 pymongo
+pydantic
+pinecone
+motor
