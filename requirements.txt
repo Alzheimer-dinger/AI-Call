@@ -1,4 +1,9 @@
 fastapi
 uvicorn
 google-generativeai
+google-genai
 python-dotenv
+pymongo
+pydantic
+pinecone
+motor

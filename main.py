@@ -16,9 +16,9 @@ from managers.websocket_manager import ConnectionManager
 from managers.session_manager import SessionManager
 
 # --- 클라이언트 초기화 ---
-client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+# client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 # Google AI Studio API Key를 사용하려면:
-# client = genai.Client(vertexai=False, api_key=GEMINI_API_KEY)
+client = genai.Client(vertexai=False, api_key=GEMINI_API_KEY)
 
 # --- 전역 변수 ---
 connection_manager = ConnectionManager()
