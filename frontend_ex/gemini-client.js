@@ -288,7 +288,7 @@ const statusDiv = document.getElementById('status');
 const transcriptsDiv = document.getElementById('transcripts');
 
 // 🔧 서버 엔드포인트 변경
-const SERVER_URL = "ws://localhost:8765/ws/realtime";
+const SERVER_URL = "ws://35.238.245.60:8765/ws/realtime";
 const SEND_SAMPLE_RATE = 16000;
 const RECEIVE_SAMPLE_RATE = 24000;
 
@@ -304,7 +304,7 @@ function getAccessTokenFromUser() {
 // 🆕 API 상태 확인 함수 추가
 async function checkServerHealth() {
     try {
-        const response = await fetch('http://localhost:8765/health');
+        const response = await fetch('http://35.238.245.60:8765/health');
         const data = await response.json();
         console.log('서버 상태:', data);
         return data.status === 'healthy';

@@ -3,7 +3,7 @@ import datetime
 import base64
 import traceback
 from typing import List, Dict, Any
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, requests
 
 from models.models import ConversationLog, ConversationTurn, SpeakerEnum
 from settings import ResponseType, SEND_SAMPLE_RATE, MEMORY_RELEVANCE_THRESHOLD, MAX_MEMORY_RESULTS
@@ -104,6 +104,11 @@ class SessionManager:
             if audio_url:
                 print(f"음성 파일: {audio_url}")
             
+            # 분석 서버로 전송
+            response = requests.post("http://localhost:8000/analyze", json=log_dict)
+            print(response.status_code)
+            print(response.json())
+
         except PyMongoError as e:
             print(f"MongoDB 저장 중 오류 발생: {e}")
             
