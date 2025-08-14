@@ -43,16 +43,13 @@ async def handle_realtime_session(websocket: WebSocket):
                     task_group.create_task(session_manager.receive_client_message())
                     task_group.create_task(session_manager.forward_to_gemini())
                     task_group.create_task(session_manager.process_gemini_response())
-            except* Exception as eg:
-                print(f"TaskGroup에서 예외 발생: {eg}")
-                # TaskGroup의 예외는 무시하고 계속 진행 (연결 종료 시 정상적인 상황)
-
-    except WebSocketDisconnect as e:
-        print(f"클라이언트 연결 끊김: {websocket.client} (코드: {e.code}, 이유: {e.reason})")
-    except Exception as e:
-        print(f"처리되지 않은 오류 발생: {e}")
-        import traceback
-        traceback.print_exc()
+            except WebSocketDisconnect as e:
+                print(f"클라이언트 연결 끊김: {websocket.client} (코드: {e.code}, 이유: {e.reason})")
+                
+            except Exception as e:
+                print(f"처리되지 않은 오류 발생: {e}")
+                import traceback
+                traceback.print_exc()
     finally:
         print("=== 세션 종료 처리 시작 ===")
         # 세션 정보 저장
