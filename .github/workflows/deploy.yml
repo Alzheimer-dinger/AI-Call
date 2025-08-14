@@ -108,7 +108,7 @@ jobs:
               -e JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
               -e GCS_BUCKET_NAME="${{ secrets.GCS_BUCKET_NAME }}" \
               ${APP_IMAGE_URI}
-            
+
             # 오래된 (사용하지 않는) Docker 이미지 정리 (선택 사항)
             echo "Cleaning up old Docker images..."
             docker image prune -f
