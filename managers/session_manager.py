@@ -3,10 +3,11 @@ import datetime
 import base64
 import traceback
 from typing import List, Dict, Any
-from fastapi import WebSocket, WebSocketDisconnect, requests
+from fastapi import WebSocket, WebSocketDisconnect
+import requests
 
 from models.models import ConversationLog, ConversationTurn, SpeakerEnum
-from settings import ResponseType, SEND_SAMPLE_RATE, MEMORY_RELEVANCE_THRESHOLD, MAX_MEMORY_RESULTS
+from settings import ResponseType, SEND_SAMPLE_RATE, MEMORY_RELEVANCE_THRESHOLD, MAX_MEMORY_RESULTS, ANALYZE_SERVER
 from managers.websocket_manager import PayloadManager
 from services.memory_service import memory_service
 from services.audio_service import audio_service
@@ -105,7 +106,7 @@ class SessionManager:
                 print(f"음성 파일: {audio_url}")
             
             # 분석 서버로 전송
-            response = requests.post("http://host.docker.internal:8000/analyze", json=log_dict)
+            response = requests.post(ANALYZE_SERVER, json=log_dict)
             print(response.status_code)
             print(response.json())
 

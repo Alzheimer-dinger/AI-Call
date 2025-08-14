@@ -19,6 +19,7 @@ PROJECT_ID = os.getenv("PROJECT_ID")
 LOCATION = os.getenv("LOCATION")
 MODEL = os.getenv("GEMINI_MODEL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ANALYZE_SERVER = "http://host.docker.internal:8000/analyze"
 
 # --- 서버 설정 ---
 SEND_SAMPLE_RATE = 16000
