@@ -69,6 +69,9 @@ jobs:
       # Step 6: Deploy to Cloud Run
       - name: Deploy to Cloud Run
         run: |
+          # 환경 변수 목록을 하나의 문자열로 정의
+          ENV_VARS="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GEMINI_MODEL=${{ env.GEMINI_MODEL }},MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }},DB_NAME=${{ env.DB_NAME }},PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }},PINECONE_INDEX_NAME=${{ env.PINECONE_INDEX_NAME }},PINECONE_DIMENSION=${{ env.PINECONE_DIMENSION }},PINECONE_METRIC=${{ env.PINECONE_METRIC }},PINECONE_CLOUD=${{ env.PINECONE_CLOUD }},PINECONE_REGION=${{ env.PINECONE_REGION }},EMBEDDING_MODEL=${{ env.EMBEDDING_MODEL }},JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }},GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}"
+
           # gcloud run deploy 명령어를 사용하여 Cloud Run에 배포
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image ${{ env.IMAGE_URI }} \
@@ -76,18 +79,6 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --port 8765 \
-            --set-env-vars GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}",\
-              GEMINI_MODEL="${{ env.GEMINI_MODEL }}",\
-              MONGO_CONNECTION_STRING="${{ secrets.MONGO_CONNECTION_STRING }}",\
-              DB_NAME="${{ env.DB_NAME }}",\
-              PINECONE_API_KEY="${{ secrets.PINECONE_API_KEY }}",\
-              PINECONE_INDEX_NAME="${{ env.PINECONE_INDEX_NAME }}",\
-              PINECONE_DIMENSION="${{ env.PINECONE_DIMENSION }}",\
-              PINECONE_METRIC="${{ env.PINECONE_METRIC }}",\
-              PINECONE_CLOUD="${{ env.PINECONE_CLOUD }}",\
-              PINECONE_REGION="${{ env.PINECONE_REGION }}",\
-              EMBEDDING_MODEL="${{ env.EMBEDDING_MODEL }}",\
-              JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}",\
-              GCS_BUCKET_NAME="${{ secrets.GCS_BUCKET_NAME }}"
+            --set-env-vars "${ENV_VARS}"
           
           echo "Deployment to Cloud Run completed successfully!"
