@@ -91,6 +91,7 @@ jobs:
 
             echo "Running new Docker container..."
             docker run -d \
+              --add-host="host.docker.internal:host-gateway" \
               --name ${APP_CONTAINER_NAME} \
               -p ${APP_PORT_HOST}:${APP_PORT_CONTAINER} \
               --restart always \
