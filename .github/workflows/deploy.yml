@@ -64,14 +64,13 @@ jobs:
           
           echo "Docker image pushed successfully!"
 
-      - name: Deploy to Compute Engine via gcloud SSH # 6. Compute Engine 인스턴스에 SSH로 접속하여 배포
-        uses: 'google-github-actions/ssh-compute@v1'
+      - name: Deploy to Compute Engine via SSH # 6. Compute Engine 인스턴스에 SSH로 접속하여 배포
+        uses: appleboy/ssh-action@v0.1.6
         with:
-          instance_name: instance-20250729-140056 # 인스턴스 이름
-          zone: us-central1-c # 인스턴스 존
-          project_id: ${{ secrets.GCP_PROJECT_ID }} # 프로젝트 ID
-          user: alzheimerdinger_contact
-          ssh_private_key: '${{ secrets.GCP_SSH_PRIVATE_KEY }}'
+          host: ${{ secrets.VM_SSH_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
           script: |
             # 사용할 Docker 이미지의 전체 URI
             APP_IMAGE_URI="${{ env.IMAGE_URI }}" # 이전 단계에서 설정된 환경 변수 사용
