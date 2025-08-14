@@ -105,7 +105,7 @@ class SessionManager:
                 print(f"음성 파일: {audio_url}")
             
             # 분석 서버로 전송
-            response = requests.post("http://localhost:8000/analyze", json=log_dict)
+            response = requests.post("http://host.docker.internal:8000/analyze", json=log_dict)
             print(response.status_code)
             print(response.json())
 
