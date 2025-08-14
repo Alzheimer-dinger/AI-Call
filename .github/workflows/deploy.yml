@@ -1,4 +1,4 @@
-name: Build, Push, and Deploy to Cloud Run
+name: Build, Push, and Deploy
 
 on:
   push:
@@ -11,8 +11,7 @@ env:
   REGION: ${{ secrets.GCP_REGION }}
   ARTIFACT_REGISTRY: ${{ secrets.GCP_REGION }}-docker.pkg.dev
   REPOSITORY_NAME: ${{ secrets.ARTIFACT_REPO_NAME }}
-  IMAGE_NAME: alzheimer-call
-  SERVICE_NAME: alzheimer-call-service
+  IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
   
   # 컨테이너에 주입될 환경 변수들 (비밀이 아닌 것들은 여기에 고정 값으로 정의)
   GEMINI_MODEL: gemini-live-2.5-flash-preview
@@ -45,13 +44,12 @@ jobs:
 
       # Step 4: Configure Docker to use the gcloud command-line tool as a credential helper
       - name: Configure Docker
-        run: gcloud auth configure-docker ${{ env.ARTIFACT_REGISTRY }}
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
-      # Step 5: Build and Push Docker Image to Artifact Registry
-      - name: Build and Push Docker Image
+      - name: Build and Push Docker Image to Artifact Registry # 5. Docker 이미지 빌드 및 푸시
         run: |
           # Docker 이미지의 전체 URI 정의
-          IMAGE_URI="${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.IMAGE_NAME }}:latest"
+          IMAGE_URI="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO_NAME }}/alzheimer-call:latest"
           
           # Docker 이미지 빌드
           echo "Building Docker image: ${IMAGE_URI}"
@@ -66,19 +64,49 @@ jobs:
           
           echo "Docker image pushed successfully!"
 
-      # Step 6: Deploy to Cloud Run
-      - name: Deploy to Cloud Run
-        run: |
-          # 환경 변수 목록을 하나의 문자열로 정의
-          ENV_VARS="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GEMINI_MODEL=${{ env.GEMINI_MODEL }},MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }},DB_NAME=${{ env.DB_NAME }},PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }},PINECONE_INDEX_NAME=${{ env.PINECONE_INDEX_NAME }},PINECONE_DIMENSION=${{ env.PINECONE_DIMENSION }},PINECONE_METRIC=${{ env.PINECONE_METRIC }},PINECONE_CLOUD=${{ env.PINECONE_CLOUD }},PINECONE_REGION=${{ env.PINECONE_REGION }},EMBEDDING_MODEL=${{ env.EMBEDDING_MODEL }},JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }},GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}"
+      - name: Deploy to Compute Engine via SSH # 6. Compute Engine 인스턴스에 SSH로 접속하여 배포
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.VM_SSH_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: 22
+          script: |
+            # 사용할 Docker 이미지의 전체 URI
+            APP_IMAGE_URI="${{ env.IMAGE_URI }}" # 이전 단계에서 설정된 환경 변수 사용
+            APP_CONTAINER_NAME="alzheimer-call-container"
+            
+            # FastAPI 서버 포트 설정
+            APP_PORT_HOST="8765" # 호스트에 노출할 포트
+            APP_PORT_CONTAINER="8765" # 컨테이너 내부의 포트 (FastAPI 서버가 리슨하는 포트와 일치)
 
-          # gcloud run deploy 명령어를 사용하여 Cloud Run에 배포
-          gcloud run deploy ${{ env.SERVICE_NAME }} \
-            --image ${{ env.IMAGE_URI }} \
-            --region ${{ env.REGION }} \
-            --platform managed \
-            --allow-unauthenticated \
-            --port 8765 \
-            --set-env-vars "${ENV_VARS}"
-          
-          echo "Deployment to Cloud Run completed successfully!"
+            echo "Stopping and removing existing container (if any)..."
+            # 기존 컨테이너 중지 (실행 중이 아니라도 오류 없이 계속 진행)
+            docker stop ${APP_CONTAINER_NAME} || true
+            # 기존 컨테이너 제거 (존재하지 않아도 오류 없이 계속 진행)
+            docker rm ${APP_CONTAINER_NAME} || true
+
+            echo "Pulling latest Docker image: ${APP_IMAGE_URI}..."
+            docker pull ${APP_IMAGE_URI}
+
+            echo "Running new Docker container..."
+            docker run -d \
+              --name ${APP_CONTAINER_NAME} \
+              -p ${APP_PORT_HOST}:${APP_PORT_CONTAINER} \
+              --restart always \
+              -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+              -e GEMINI_MODEL="${{ env.GEMINI_MODEL }}" \
+              -e MONGO_CONNECTION_STRING="${{ secrets.MONGO_CONNECTION_STRING }}" \
+              -e DB_NAME="${{ env.DB_NAME }}" \
+              -e PINECONE_API_KEY="${{ secrets.PINECONE_API_KEY }}" \
+              -e PINECONE_INDEX_NAME="${{ env.PINECONE_INDEX_NAME }}" \
+              -e PINECONE_DIMENSION="${{ env.PINECONE_DIMENSION }}" \
+              -e PINECONE_METRIC="${{ env.PINECONE_METRIC }}" \
+              -e PINECONE_CLOUD="${{ env.PINECONE_CLOUD }}" \
+              -e PINECONE_REGION="${{ env.PINECONE_REGION }}" \
+              -e EMBEDDING_MODEL="${{ env.EMBEDDING_MODEL }}" \
+              -e JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
+              -e GCS_BUCKET_NAME="${{ secrets.GCS_BUCKET_NAME }}" \
+              ${APP_IMAGE_URI}
+
+            echo "Deployment to Compute Engine completed successfully!"

@@ -1,0 +1,84 @@
+name: Build, Push, and Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - no-work # 작동하지 않는 워크플로우
+
+env:
+  # 환경 변수 정의 (GitHub Secrets 및 고정 값 사용)
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  ARTIFACT_REGISTRY: ${{ secrets.GCP_REGION }}-docker.pkg.dev
+  REPOSITORY_NAME: ${{ secrets.ARTIFACT_REPO_NAME }}
+  IMAGE_NAME: alzheimer-call
+  SERVICE_NAME: alzheimer-call-service
+  
+  # 컨테이너에 주입될 환경 변수들 (비밀이 아닌 것들은 여기에 고정 값으로 정의)
+  GEMINI_MODEL: gemini-live-2.5-flash-preview
+  DB_NAME: alzheimerdinger
+  PINECONE_INDEX_NAME: alzheimer-memories
+  PINECONE_DIMENSION: 768
+  PINECONE_METRIC: cosine
+  PINECONE_CLOUD: aws
+  PINECONE_REGION: us-east-1
+  EMBEDDING_MODEL: models/text-embedding-001
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest # 최신 Ubuntu 환경에서 실행
+
+    steps:
+      # Step 1: Check out the repository so the job can access it
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}' # GitHub Secret에서 서비스 계정 키 사용
+      
+      # Step 3: Set up the Google Cloud SDK
+      - name: Set up Cloud SDK
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      # Step 4: Configure Docker to use the gcloud command-line tool as a credential helper
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.ARTIFACT_REGISTRY }}
+
+      # Step 5: Build and Push Docker Image to Artifact Registry
+      - name: Build and Push Docker Image
+        run: |
+          # Docker 이미지의 전체 URI 정의
+          IMAGE_URI="${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY_NAME }}/${{ env.IMAGE_NAME }}:latest"
+          
+          # Docker 이미지 빌드
+          echo "Building Docker image: ${IMAGE_URI}"
+          docker build -t $IMAGE_URI .
+          
+          # Docker 이미지 푸시
+          echo "Pushing Docker image to Artifact Registry..."
+          docker push $IMAGE_URI
+          
+          # 다음 단계에서 사용할 수 있도록 이미지 URI를 출력
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
+          
+          echo "Docker image pushed successfully!"
+
+      # Step 6: Deploy to Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          # 환경 변수 목록을 하나의 문자열로 정의
+          ENV_VARS="GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},GEMINI_MODEL=${{ env.GEMINI_MODEL }},MONGO_CONNECTION_STRING=${{ secrets.MONGO_CONNECTION_STRING }},DB_NAME=${{ env.DB_NAME }},PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }},PINECONE_INDEX_NAME=${{ env.PINECONE_INDEX_NAME }},PINECONE_DIMENSION=${{ env.PINECONE_DIMENSION }},PINECONE_METRIC=${{ env.PINECONE_METRIC }},PINECONE_CLOUD=${{ env.PINECONE_CLOUD }},PINECONE_REGION=${{ env.PINECONE_REGION }},EMBEDDING_MODEL=${{ env.EMBEDDING_MODEL }},JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }},GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}"
+
+          # gcloud run deploy 명령어를 사용하여 Cloud Run에 배포
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.IMAGE_URI }} \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8765 \
+            --set-env-vars "${ENV_VARS}"
+          
+          echo "Deployment to Cloud Run completed successfully!"
