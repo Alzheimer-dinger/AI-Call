@@ -15,5 +15,5 @@ COPY . /app
 # Make port 8765 available to the world outside this container
 EXPOSE 8765
 
-# Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8765"]
+# Run the application with full logging
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8765", "--log-level", "debug", "--access-log"]

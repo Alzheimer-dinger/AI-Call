@@ -1,6 +1,9 @@
 from fastapi import WebSocket
 from typing import List, Set
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ConnectionManager:
     """WebSocket 연결을 관리하는 클래스"""
@@ -28,7 +31,7 @@ class ConnectionManager:
             try:
                 await connection.send_text(message)
             except Exception as e:
-                print(f"브로드캐스트 중 오류 발생: {e}")
+                logger.error(f"브로드캐스트 중 오류 발생: {e}")
 
 class PayloadManager:
     """페이로드 관련 유틸리티를 관리하는 클래스"""

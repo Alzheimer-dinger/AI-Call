@@ -1,10 +1,13 @@
 import json
 import time
 import uuid
+import logging
 from typing import List, Dict, Any
 from dataclasses import dataclass
 import os
 from pinecone import Pinecone, ServerlessSpec
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MemorySearchResult:
@@ -28,13 +31,13 @@ class MemoryService:
         if self.pinecone_api_key:
             self.pinecone = Pinecone(api_key=self.pinecone_api_key)
         else:
-            print("Warning: PINECONE_API_KEY not found. Memory functions will be disabled.")
+            logger.warning("PINECONE_API_KEY not found. Memory functions will be disabled.")
             self.pinecone = None
 
     def get_embedding(self, text: str) -> List[float]:
         """주어진 텍스트를 Pinecone inference API를 사용하여 임베딩합니다."""
         if not self.pinecone:
-            print("Pinecone client not initialized")
+            logger.warning("Pinecone client not initialized")
             return []
             
         try:
@@ -63,10 +66,10 @@ class MemoryService:
                 elif hasattr(first_embedding, 'embedding'):
                     return first_embedding.embedding
             
-            print(f"[DEBUG] No embeddings found in result")
+            logger.debug("No embeddings found in result")
             return []
         except Exception as e:
-            print(f"Error generating embedding: {e}")
+            logger.error(f"Error generating embedding: {e}")
             return []
 
     def setup_pinecone(self) -> None:
@@ -76,7 +79,7 @@ class MemoryService:
             
         try:
             if self.index_name not in self.pinecone.list_indexes().names():
-                print(f"Creating Pinecone index: {self.index_name}")
+                logger.info(f"Creating Pinecone index: {self.index_name}")
                 self.pinecone.create_index(
                     name=self.index_name,
                     dimension=self.dimension,
@@ -87,33 +90,33 @@ class MemoryService:
                     )
                 )
                 time.sleep(2)
-                print("Index created successfully.")
+                logger.info("Index created successfully.")
             else:
-                print(f"Pinecone index '{self.index_name}' already exists.")
+                logger.info(f"Pinecone index '{self.index_name}' already exists.")
         except Exception as e:
-            print(f"Error setting up Pinecone: {e}")
+            logger.error(f"Error setting up Pinecone: {e}")
 
     def retrieve_memories(self, query: str, top_k: int = 3, user_id: str = None) -> List[MemorySearchResult]:
         """주어진 쿼리와 가장 유사한 기억을 Pinecone에서 검색합니다."""
-        print(f"[DEBUG] retrieve_memories called with query='{query}', user_id='{user_id}'")
+        logger.debug(f"retrieve_memories called with query='{query}', user_id='{user_id}'")
         
         if not self.pinecone:
-            print("[DEBUG] Pinecone client not initialized")
+            logger.debug("Pinecone client not initialized")
             return []
             
         try:
             index = self.pinecone.Index(self.index_name)
-            print(f"[DEBUG] Getting embedding for query: '{query}'")
+            logger.debug(f"Getting embedding for query: '{query}'")
             query_embedding = self.get_embedding(query)
             
             if not query_embedding:
-                print("[DEBUG] Failed to get embedding")
+                logger.debug("Failed to get embedding")
                 return []
                 
-            print(f"[DEBUG] Got embedding with length: {len(query_embedding)}")
+            logger.debug(f"Got embedding with length: {len(query_embedding)}")
 
             if user_id:
-                print(f"[DEBUG] Searching with user_id filter: {user_id}")
+                logger.debug(f"Searching with user_id filter: {user_id}")
                 results = index.query(
                     vector=query_embedding,
                     top_k=top_k,
@@ -121,29 +124,29 @@ class MemoryService:
                     filter={"user_id": {"$eq": user_id}}
                 )
             else:
-                print("[DEBUG] Searching without user_id filter")
+                logger.debug("Searching without user_id filter")
                 results = index.query(
                     vector=query_embedding,
                     top_k=top_k,
                     include_metadata=True
                 )
 
-            print(f"[DEBUG] Pinecone query returned: {results}")
+            logger.debug(f"Pinecone query returned: {results}")
             
             retrieved_memories = []
             if results.get("matches"):
-                print(f"[DEBUG] Found {len(results['matches'])} matches")
+                logger.debug(f"Found {len(results['matches'])} matches")
                 for match in results["matches"]:
                     retrieved_memories.append(MemorySearchResult(
                         score=match.get("score", 0.0),
                         metadata=match.get("metadata", {})
                     ))
             else:
-                print("[DEBUG] No matches found in Pinecone results")
+                logger.debug("No matches found in Pinecone results")
 
             return retrieved_memories
         except Exception as e:
-            print(f"[DEBUG] Error retrieving memories: {e}")
+            logger.error(f"Error retrieving memories: {e}")
             import traceback
             traceback.print_exc()
             return []
@@ -175,11 +178,11 @@ class MemoryService:
             
             # Pinecone에 업서트
             index.upsert(vectors=[vector])
-            print(f"Memory added for user {user_id}: {memory_id}")
+            logger.info(f"Memory added for user {user_id}: {memory_id}")
             
             return memory_id
         except Exception as e:
-            print(f"Error adding memory: {e}")
+            logger.error(f"Error adding memory: {e}")
             return ""
 
 # 전역 인스턴스 생성

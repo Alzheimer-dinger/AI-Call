@@ -2,9 +2,12 @@ import asyncio
 import datetime
 import base64
 import traceback
+import logging
 from typing import List, Dict, Any
 from fastapi import WebSocket, WebSocketDisconnect
 import requests
+
+logger = logging.getLogger(__name__)
 
 from models.models import ConversationLog, ConversationTurn, SpeakerEnum
 from settings import ResponseType, SEND_SAMPLE_RATE, MEMORY_RELEVANCE_THRESHOLD, MAX_MEMORY_RESULTS, ANALYZE_SERVER
@@ -45,12 +48,12 @@ class SessionManager:
             # 스트리밍 녹음기에 실시간 전송
             success = await self.audio_recorder.append_audio_chunk(message)
             if not success:
-                print(f"오디오 청크 추가 실패: {len(message)} bytes")
+                logger.error(f"오디오 청크 추가 실패: {len(message)} bytes")
             
             # 레거시 지원 (기존 코드와 호환성)
             self.input_audio_chunks.append(message)
         else:
-            print("오디오 스트림 종료 신호 수신")
+            logger.info("오디오 스트림 종료 신호 수신")
     
     def add_transcription(self, speaker: str, content: List[str]):
         """대화 내용을 기록에 추가"""
@@ -66,14 +69,14 @@ class SessionManager:
 
     async def save_session(self):
         """세션 정보를 DB에 저장"""
-        print(f"save_session 시작 - 세션 ID: {self.session_id}")
+        logger.info(f"save_session 시작 - 세션 ID: {self.session_id}")
         try:
             # 세션 종료 시간 기록
             self.end_time = datetime.datetime.now().isoformat()
             
             # 대화가 없으면 저장하지 않음
             if len(self.conversation) <= 0:
-                print("대화가 없습니다.")
+                logger.info("대화가 없습니다.")
                 return
             
             # 스트리밍 녹음 완료 및 WAV 파일 생성
@@ -82,11 +85,11 @@ class SessionManager:
                 try:
                     audio_url = await self.audio_recorder.finalize_recording()
                     if audio_url:
-                        print(f"스트리밍 음성 파일 업로드 완료: {audio_url}")
+                        logger.info(f"스트리밍 음성 파일 업로드 완료: {audio_url}")
                     else:
-                        print("음성 파일 업로드 실패 - 녹음된 데이터가 없거나 업로드 중 오류 발생")
+                        logger.warning("음성 파일 업로드 실패 - 녹음된 데이터가 없거나 업로드 중 오류 발생")
                 except Exception as e:
-                    print(f"녹음 완료 처리 중 오류: {e}")
+                    logger.error(f"녹음 완료 처리 중 오류: {e}")
                 finally:
                     # 리소스 정리
                     self.audio_recorder.cleanup()
@@ -111,20 +114,20 @@ class SessionManager:
 
             result = await transcripts_collection.insert_one(log_dict)
                 
-            print(f"세션 저장 성공: {self.session_id}, DB ID: {result.inserted_id}")
+            logger.info(f"세션 저장 성공: {self.session_id}, DB ID: {result.inserted_id}")
             if audio_url:
-                print(f"음성 파일: {audio_url}")
+                logger.info(f"음성 파일: {audio_url}")
             
             # 분석 서버로 전송
             response = requests.post(ANALYZE_SERVER, json=log_dict)
-            print(response.status_code)
-            print(response.json())
+            logger.info(f"HTTP 상태 코드: {response.status_code}")
+            logger.info(f"HTTP 응답: {response.json()}")
 
         except PyMongoError as e:
-            print(f"MongoDB 저장 중 오류 발생: {e}")
+            logger.error(f"MongoDB 저장 중 오류 발생: {e}")
             
         except Exception as e:
-            print(f"세션 저장 중 예기치 않은 오류 발생: {e}")
+            logger.error(f"세션 저장 중 예기치 않은 오류 발생: {e}")
             
             # 오류 발생시 리소스 정리
             if hasattr(self, 'audio_recorder') and self.audio_recorder:
@@ -142,7 +145,7 @@ class SessionManager:
                 return f"알 수 없는 함수입니다: {function_name}"
                 
         except Exception as e:
-            print(f"Function call error: {e}")
+            logger.error(f"Function call error: {e}")
             traceback.print_exc()
             return f"함수 실행 중 오류가 발생했습니다: {str(e)}"
 
@@ -153,7 +156,7 @@ class SessionManager:
             return "검색어가 제공되지 않았습니다."
             
         memories = memory_service.retrieve_memories(query, top_k=5, user_id=self.user_id)
-        print(f"[DEBUG] Retrieved {len(memories)} memories")
+        logger.debug(f"Retrieved {len(memories)} memories")
                 
         
         if not memories:
@@ -161,18 +164,18 @@ class SessionManager:
         
         if memories:
             for i, mem in enumerate(memories):
-                print(f"[DEBUG] Memory {i}: score={mem.score}, content={mem.metadata.get('content', '')[:50]}")
+                logger.debug(f"Memory {i}: score={mem.score}, content={mem.metadata.get('content', '')[:50]}")
         
         if not memories:
-            print(f"[DEBUG] No memories found for query '{query}'")
+            logger.debug(f"No memories found for query '{query}'")
             return f"'{query}'와 관련된 기억을 찾을 수 없습니다."
         
         # 높은 스코어만 필터링 (관련성 있는 결과만)
         relevant_memories = [m for m in memories if m.score > 0.6]
-        print(f"[DEBUG] Filtered to {len(relevant_memories)} relevant memories (score > 0.6)")
+        logger.debug(f"Filtered to {len(relevant_memories)} relevant memories (score > 0.6)")
         
         if not relevant_memories:
-            print(f"[DEBUG] No relevant memories found (all scores <= 0.6)")
+            logger.debug("No relevant memories found (all scores <= 0.6)")
             return f"'{query}'와 관련된 기억을 찾을 수 없습니다."
         
         result = f"'{query}'와 관련된 기억들:\n"
@@ -221,11 +224,11 @@ class SessionManager:
                 message = await self.websocket.receive_bytes()
                 await self.add_audio(message)
         except WebSocketDisconnect as e:
-            print("오디오 수신 중 WebSocket 연결이 종료되었습니다.")
+            logger.info("오디오 수신 중 WebSocket 연결이 종료되었습니다.")
             raise  # WebSocketDisconnect를 상위로 전파
 
         except Exception as e:
-            print(f"메시지 수신 중 오류: {e}")
+            logger.error(f"메시지 수신 중 오류: {e}")
             raise  # 다른 예외도 상위로 전파
 
         finally:
@@ -248,7 +251,7 @@ class SessionManager:
                 )
 
             except Exception as e:
-                print(f"Gemini로 데이터 전송 중 오류: {e}")
+                logger.error(f"Gemini로 데이터 전송 중 오류: {e}")
             
             finally:
                 self.audio_queue.task_done()
@@ -265,11 +268,11 @@ class SessionManager:
                     if response.session_resumption_update:
                         update = response.session_resumption_update
                         if update.resumable and update.new_handle:
-                            print(f"새 세션 핸들: {update.new_handle}")
+                            logger.info(f"새 세션 핸들: {update.new_handle}")
                     
                     # 연결 종료 예정 알림
                     if response.go_away is not None:
-                        print(f"연결 종료 예정: {response.go_away.time_left}")
+                        logger.info(f"연결 종료 예정: {response.go_away.time_left}")
 
                     # 도구 호출 처리 (server_content보다 먼저 처리)
                     if response.tool_call:
@@ -282,7 +285,7 @@ class SessionManager:
 
                     # 중단 처리
                     if server_content.interrupted:
-                        print("응답이 중단되었습니다.")
+                        logger.info("응답이 중단되었습니다.")
                         await self.websocket.send_text(
                             PayloadManager.to_payload(ResponseType.INTERRUPT, "")
                         )
@@ -302,7 +305,7 @@ class SessionManager:
                         await self.websocket.send_text(
                             PayloadManager.to_payload(ResponseType.TURN_COMPLETE, True)
                         )
-                        print("Gemini 응답 완료")
+                        logger.info("Gemini 응답 완료")
                         
                         # 대화 기록 저장
                         if input_transcriptions:
@@ -314,39 +317,39 @@ class SessionManager:
                             output_transcriptions.clear()
             
             except Exception as e:
-                print(f"Gemini 응답 처리 중 오류: {e}")
+                logger.error(f"Gemini 응답 처리 중 오류: {e}")
                 traceback.print_exc()
 
     async def _handle_tool_calls(self, tool_call):
         """도구 호출 처리"""
-        print(f"[TOOL CALL] Processing {len(tool_call.function_calls)} function calls")
+        logger.info(f"[TOOL CALL] Processing {len(tool_call.function_calls)} function calls")
         
         function_responses = []
         for fc in tool_call.function_calls:
             function_name = fc.name
             function_args = fc.args if hasattr(fc, 'args') else {}
             
-            print(f"[FUNCTION CALL] {function_name}({function_args})")
+            logger.info(f"[FUNCTION CALL] {function_name}({function_args})")
             
             try:
                 if function_name == "search_memories":
                     query = function_args.get("query", "")
                     top_k = function_args.get("top_k", 3)
                     
-                    print(f"[DEBUG] search_memories called with query: '{query}', top_k: {top_k}")
+                    logger.debug(f"search_memories called with query: '{query}', top_k: {top_k}")
                     
                     if not query:
                         result = "검색어가 제공되지 않았습니다."
                     else:
                         memories = memory_service.retrieve_memories(query, top_k, self.user_id)
-                        print(f"[DEBUG] Retrieved {len(memories)} memories")
+                        logger.debug(f"Retrieved {len(memories)} memories")
                         
                         if memories:
                             memory_text = []
                             for memory in memories:
                                 content = memory.metadata.get('content', '')
                                 score = memory.score
-                                print(f"[DEBUG] Memory: score={score}, content={content[:50] if content else 'No content'}")
+                                logger.debug(f"Memory: score={score}, content={content[:50] if content else 'No content'}")
                                 
                                 if score > 0.001:
                                     date = memory.metadata.get('date', '')
@@ -383,7 +386,7 @@ class SessionManager:
                 else:
                     result = f"알 수 없는 함수: {function_name}"
                 
-                print(f"[FUNCTION RESULT] {result}")
+                logger.info(f"[FUNCTION RESULT] {result}")
                 
                 # FunctionResponse 생성
                 function_response = FunctionResponse(
@@ -394,7 +397,7 @@ class SessionManager:
                 function_responses.append(function_response)
                 
             except Exception as e:
-                print(f"[FUNCTION ERROR] {function_name}: {e}")
+                logger.error(f"[FUNCTION ERROR] {function_name}: {e}")
                 traceback.print_exc()
                 error_response = FunctionResponse(
                     id=fc.id,
@@ -418,7 +421,7 @@ class SessionManager:
                         PayloadManager.to_payload(ResponseType.AUDIO, encoded_audio)
                     )
                 except Exception as e:
-                    print(f"오디오 전송 중 오류: {e}")
+                    logger.error(f"오디오 전송 중 오류: {e}")
         
 
     async def _handle_transcriptions(self, server_content, input_transcriptions, output_transcriptions):
@@ -446,4 +449,4 @@ class SessionManager:
                         )
                     )
         except Exception as e:
-            print(f"전사 내용 전송 중 오류: {e}")
+            logger.error(f"전사 내용 전송 중 오류: {e}")

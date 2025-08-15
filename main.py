@@ -1,7 +1,12 @@
 import asyncio
+import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 설정 및 유틸리티 import
 from settings import (
@@ -30,7 +35,7 @@ async def handle_realtime_session(websocket: WebSocket):
     user_id = await websocket_auth.authenticate_websocket(websocket)
 
     await connection_manager.connect(websocket)
-    print(f"인증된 클라이언트 연결됨: {websocket.client}, 사용자 ID: {user_id}")
+    logger.info(f"인증된 클라이언트 연결됨: {websocket.client}, 사용자 ID: {user_id}")
     session_manager = None
     
     try:
@@ -47,33 +52,33 @@ async def handle_realtime_session(websocket: WebSocket):
         ws_disconnects, other_errors = eg.split(WebSocketDisconnect)
         if ws_disconnects:
             e = ws_disconnects.exceptions[0]
-            print(f"클라이언트 연결 끊김 (TaskGroup): {websocket.client} (코드: {e.code}, 이유: {e.reason})")
+            logger.info(f"클라이언트 연결 끊김 (TaskGroup): {websocket.client} (코드: {e.code}, 이유: {e.reason})")
         if other_errors:
-            print(f"TaskGroup에서 처리되지 않은 오류 발생: {other_errors}")
+            logger.error(f"TaskGroup에서 처리되지 않은 오류 발생: {other_errors}")
     
     except WebSocketDisconnect as e:
-        print(f"클라이언트 연결 끊김: {websocket.client} (코드: {e.code}, 이유: {e.reason})")
+        logger.info(f"클라이언트 연결 끊김: {websocket.client} (코드: {e.code}, 이유: {e.reason})")
 
     except Exception as e:
         # 그 외 모든 예외
-        print(f"처리되지 않은 오류 발생: {e}")
+        logger.error(f"처리되지 않은 오류 발생: {e}")
         import traceback
         traceback.print_exc()
 
     finally:
-        print("=== 세션 종료 처리 시작 ===")
+        logger.info("=== 세션 종료 처리 시작 ===")
         if session_manager:
-            print(f"세션 매니저 발견: {session_manager.session_id}")
-            print("save_session 호출 시작...")
+            logger.info(f"세션 매니저 발견: {session_manager.session_id}")
+            logger.info("save_session 호출 시작...")
             await session_manager.save_session()
-            print("save_session 호출 완료")
+            logger.info("save_session 호출 완료")
         else:
-            print("세션 매니저가 None입니다")
+            logger.warning("세션 매니저가 None입니다")
         
         connection_manager.disconnect(websocket)
-        print(f"남은 클라이언트 수: {len(connection_manager.active_connections)}")
-        print("=== 세션 종료 처리 완료 ===")
-    print("세션 종료 됨")
+        logger.info(f"남은 클라이언트 수: {len(connection_manager.active_connections)}")
+        logger.info("=== 세션 종료 처리 완료 ===")
+    logger.info("세션 종료 됨")
 
 # --- FastAPI 애플리케이션 ---
 app = FastAPI(
@@ -118,7 +123,7 @@ async def realtime_websocket_endpoint(websocket: WebSocket):
     try:
         await handle_realtime_session(websocket)
     except Exception as e:
-        print(f"WebSocket 오류: {e}")
+        logger.error(f"WebSocket 오류: {e}")
         if not websocket.client_state.value == 3:  # DISCONNECTED 상태가 아닌 경우만
             await websocket.close(code=1011, reason="Internal server error")
 
@@ -137,7 +142,7 @@ async def test_websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     import uvicorn
     
-    print(f"서버를 포트 {PORT}에서 시작합니다...")
+    logger.info(f"서버를 포트 {PORT}에서 시작합니다...")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
