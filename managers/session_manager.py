@@ -73,6 +73,7 @@ class SessionManager:
             
             # 대화가 없으면 저장하지 않음
             if len(self.conversation) <= 0:
+                print("대화가 없습니다.")
                 return
             
             # 스트리밍 녹음 완료 및 WAV 파일 생성
