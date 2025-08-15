@@ -96,6 +96,9 @@ jobs:
               -p ${APP_PORT_HOST}:${APP_PORT_CONTAINER} \
               -v ${{ secrets.GCP_IAM_PATH }}:/app/config/key.json \
               --restart always \
+              -e PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}" \
+              -e LOCATION="${{ secrets.GCP_REGION }}" \
+              -e GOOGLE_APPLICATION_CREDENTIALS="/app/config/key.json" \
               -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
               -e GEMINI_MODEL="${{ env.GEMINI_MODEL }}" \
               -e MONGO_CONNECTION_STRING="${{ secrets.MONGO_CONNECTION_STRING }}" \
