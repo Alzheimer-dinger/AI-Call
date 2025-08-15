@@ -28,7 +28,7 @@ async def handle_realtime_session(websocket: WebSocket):
     """실시간 세션 처리 핸들러"""
     # JWT 인증 먼저 수행
     user_id = await websocket_auth.authenticate_websocket(websocket)
-    
+
     await connection_manager.connect(websocket)
     print(f"인증된 클라이언트 연결됨: {websocket.client}, 사용자 ID: {user_id}")
     session_manager = None
@@ -36,23 +36,32 @@ async def handle_realtime_session(websocket: WebSocket):
     try:
         async with client.aio.live.connect(model=MODEL, config=get_live_api_config()) as session:
             session_manager = SessionManager(websocket, session, user_id)
-            
-            try:
-                async with asyncio.TaskGroup() as task_group:
-                    # 병렬 태스크 생성
-                    task_group.create_task(session_manager.receive_client_message())
-                    task_group.create_task(session_manager.forward_to_gemini())
-                    task_group.create_task(session_manager.process_gemini_response())
-            except WebSocketDisconnect as e:
-                print(f"클라이언트 연결 끊김: {websocket.client} (코드: {e.code}, 이유: {e.reason})")
-                
-            except Exception as e:
-                print(f"처리되지 않은 오류 발생: {e}")
-                import traceback
-                traceback.print_exc()
+
+            async with asyncio.TaskGroup() as task_group:
+                # 병렬 태스크 생성
+                task_group.create_task(session_manager.receive_client_message())
+                task_group.create_task(session_manager.forward_to_gemini())
+                task_group.create_task(session_manager.process_gemini_response())
+
+    except ExceptionGroup as eg:
+        ws_disconnects, other_errors = eg.split(WebSocketDisconnect)
+        if ws_disconnects:
+            e = ws_disconnects.exceptions[0]
+            print(f"클라이언트 연결 끊김 (TaskGroup): {websocket.client} (코드: {e.code}, 이유: {e.reason})")
+        if other_errors:
+            print(f"TaskGroup에서 처리되지 않은 오류 발생: {other_errors}")
+    
+    except WebSocketDisconnect as e:
+        print(f"클라이언트 연결 끊김: {websocket.client} (코드: {e.code}, 이유: {e.reason})")
+
+    except Exception as e:
+        # 그 외 모든 예외
+        print(f"처리되지 않은 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
+
     finally:
         print("=== 세션 종료 처리 시작 ===")
-        # 세션 정보 저장
         if session_manager:
             print(f"세션 매니저 발견: {session_manager.session_id}")
             print("save_session 호출 시작...")
@@ -61,10 +70,10 @@ async def handle_realtime_session(websocket: WebSocket):
         else:
             print("세션 매니저가 None입니다")
         
-        # 연결 관리자에서 제거
         connection_manager.disconnect(websocket)
         print(f"남은 클라이언트 수: {len(connection_manager.active_connections)}")
         print("=== 세션 종료 처리 완료 ===")
+    print("세션 종료 됨")
 
 # --- FastAPI 애플리케이션 ---
 app = FastAPI(
