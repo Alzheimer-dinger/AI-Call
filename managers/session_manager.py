@@ -118,8 +118,10 @@ class SessionManager:
             if audio_url:
                 logger.info(f"음성 파일: {audio_url}")
             
-            # 분석 서버로 전송
-            response = requests.post(ANALYZE_SERVER, json=log_dict)
+            # 분석 서버로 전송 (ObjectId를 문자열로 변환)
+            log_dict_for_api = log_dict.copy()
+            log_dict_for_api['_id'] = str(result.inserted_id)
+            response = requests.post(ANALYZE_SERVER, json=log_dict_for_api)
             logger.info(f"HTTP 상태 코드: {response.status_code}")
             logger.info(f"HTTP 응답: {response.json()}")
 
