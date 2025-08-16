@@ -31,7 +31,7 @@ class SessionManager:
         # 세션 정보
         self.session_id: str = str(datetime.datetime.now().timestamp())
         self.user_id: str = user_id  # JWT에서 추출된 사용자 ID
-        self.start_time: datetime.datetime = datetime.datetime.now().isoformat()
+        self.start_time: datetime.datetime = datetime.datetime.now()
         self.end_time: datetime.datetime = None
         self.conversation: List[ConversationTurn] = []  # 타입 수정
         
@@ -72,7 +72,7 @@ class SessionManager:
         logger.info(f"save_session 시작 - 세션 ID: {self.session_id}")
         try:
             # 세션 종료 시간 기록
-            self.end_time = datetime.datetime.now().isoformat()
+            self.end_time = datetime.datetime.now()
             
             # 대화가 없으면 저장하지 않음
             if len(self.conversation) <= 0:
@@ -107,10 +107,6 @@ class SessionManager:
             log_dict = log.model_dump()
             if 'session_id' in log_dict:
                 log_dict['session_id'] = str(log_dict['session_id'])
-            if 'start_time' in log_dict:
-                log_dict['start_time'] = str(log_dict['start_time'])
-            if 'end_time' in log_dict:
-                log_dict['end_time'] = str(log_dict['end_time'])
 
             result = await transcripts_collection.insert_one(log_dict)
                 
