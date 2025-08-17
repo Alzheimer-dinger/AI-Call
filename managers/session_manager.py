@@ -29,7 +29,7 @@ class SessionManager:
         self.audio_queue = asyncio.Queue()
         
         # 세션 정보
-        self.session_id: str = str(datetime.datetime.now().timestamp())
+        self.session_id: str = str(uuid.uuid4())
         self.user_id: str = user_id  # JWT에서 추출된 사용자 ID
         self.start_time: datetime.datetime = datetime.datetime.now()
         self.end_time: datetime.datetime = None
