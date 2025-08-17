@@ -3,6 +3,7 @@ import datetime
 import base64
 import traceback
 import logging
+import uuid
 from typing import List, Dict, Any
 from fastapi import WebSocket, WebSocketDisconnect
 import requests
