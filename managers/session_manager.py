@@ -97,6 +97,7 @@ class SessionManager:
                     self.audio_recorder = None
             
             log = ConversationLog(
+                session_id=self.session_id,
                 user_id=self.user_id,
                 start_time=self.start_time,
                 end_time=self.end_time,

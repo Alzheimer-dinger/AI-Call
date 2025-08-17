@@ -22,7 +22,7 @@ class ConversationLog(BaseModel):
     """
     하나의 대화 세션 전체 기록을 나타내는 Pydantic 모델
     """
-    session_id: uuid.UUID = Field(uuid.uuid1(), description="세션의 고유 식별자 (UUID)")
+    session_id: uuid.UUID = Field(default_factory=uuid.uuid4, description="세션의 고유 식별자 (UUID)")
     user_id: str = Field(..., description="사용자의 고유 식별자 (UUID)")
     start_time: datetime = Field(..., description="대화 시작 시간 (ISO 8601 형식)")
     end_time: datetime = Field(..., description="대화 종료 시간 (ISO 8601 형식)")
